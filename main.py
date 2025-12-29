@@ -13,8 +13,13 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
+from langfuse import observe, get_client
+from langfuse.langchain import CallbackHandler
+
 # Load environment variables from .env file
 dotenv.load_dotenv()
+
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
@@ -42,6 +47,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed-documents")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -152,6 +158,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -189,11 +196,24 @@ def generate_context(ai_message: AIMessage) -> dict:
             )
         )
 
+def set_langfuse_session():
+    langfuse_client = get_client()
+    langfuse_client.update_current_trace(
+        session_id=session_id,
+    )
+
+def get_langfuse_metadata() -> dict:
+    return {
+        "langfuse_session_id": session_id,
+        "langfuse_user_id": user_id,
+    }
 
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+@observe(name="main")
 def main():
+    set_langfuse_session()
     # List of available tools
     tools = [smartphone_info_tool]
 
@@ -260,18 +280,40 @@ def main():
 
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
+        langfuse_callback = CallbackHandler()
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+                goodbye_message = goodbye_chain.invoke(
+                    input={"user_id": user_id},
+                    config={
+                        "run_name": "goodbye-message",
+                        "callbacks": [langfuse_callback],
+                        "metadata": get_langfuse_metadata()
+                    }
+                )
                 print(f"System: {goodbye_message.content}")
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke(
+                input={"user_input": user_input, "conversation": conversation},
+                config={
+                    "run_name": "context",
+                    "callbacks": [langfuse_callback],
+                    "metadata": get_langfuse_metadata()
+                }
+            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke(
+                input={"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                config={
+                    "run_name": "ai-response",
+                    "callbacks": [langfuse_callback],
+                    "metadata": get_langfuse_metadata()
+                }
+            )
 
             print(f"System: {response.content}")
             conversation.append(response)
