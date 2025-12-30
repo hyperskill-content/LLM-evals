@@ -21,6 +21,8 @@ dotenv.load_dotenv()
 
 session_id = f"session-{uuid.uuid4().hex[:8]}"
 
+langfuse_client = get_client()
+
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 
@@ -197,8 +199,8 @@ def generate_context(ai_message: AIMessage) -> dict:
         )
 
 def set_langfuse_session():
-    langfuse_client = get_client()
     langfuse_client.update_current_trace(
+        name="ai-response",
         session_id=session_id,
     )
 
