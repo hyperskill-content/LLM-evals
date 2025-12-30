@@ -21,6 +21,8 @@ dotenv.load_dotenv()
 
 session_id = f"session-{uuid.uuid4().hex[:8]}"
 
+langfuse_client = get_client()
+
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 
@@ -197,8 +199,8 @@ def generate_context(ai_message: AIMessage) -> dict:
         )
 
 def set_langfuse_session():
-    langfuse_client = get_client()
     langfuse_client.update_current_trace(
+        name="ai-response",
         session_id=session_id,
     )
 
@@ -292,6 +294,16 @@ def main():
                         "metadata": get_langfuse_metadata()
                     }
                 )
+
+                feedback = input("Was the recommendation helpful? (Yes/No): ")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+                langfuse_client.score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment
+                )
+
                 print(f"System: {goodbye_message.content}")
                 break
 
@@ -309,7 +321,7 @@ def main():
             response = review_chain.invoke(
                 input={"user_id": user_id, "user_input": user_input, "conversation": conversation},
                 config={
-                    "run_name": "ai-response",
+                    "run_name": "final-response",
                     "callbacks": [langfuse_callback],
                     "metadata": get_langfuse_metadata()
                 }
