@@ -35,7 +35,7 @@ You can also further customize the callback handler, such as adding a session ID
 
 ```python
 response = llm.invoke(prompt, config={
-	 "run_naame": "my-run",
+	 "run_name": "my-run",
 	 "callbacks": [langfuse_handler],
 	 "metadata": {
 	    "langfuse_session_id": "your-session-id",
