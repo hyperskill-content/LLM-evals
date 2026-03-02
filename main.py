@@ -300,6 +300,17 @@ def main():
                         },
                     }
                 )
+
+                feedback = input("Was this answer helpful? (Yes/No): ").strip()
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ").strip()
+
+                langfuse_client.score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment
+                )
+
                 print(f"System: {goodbye_message.content}")
                 break
 
