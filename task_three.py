@@ -21,9 +21,11 @@ dotenv.load_dotenv()
 # When you run the code and send some queries, you should see the scores in the web UI
 # showing the user feedback and comments for that trace.
 
+
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 session_name = f"session-{uuid.uuid4().hex[:8]}"
+os.environ["OTEL_SERVICE_NAME"] = os.getenv("OTEL_SERVICE_NAME")
 
 langfuse_handler = CallbackHandler()
 
@@ -204,6 +206,10 @@ def _update_trace(run_name: str):
         name=run_name,
         session_id=session_name,
         user_id=user_id,
+        input={
+            "user_id": user_id,
+            "session": session_name
+        }
     )
 
 
@@ -295,6 +301,10 @@ def main():
                         },
                     },
                 )
+                lf = get_client()
+                lf.update_current_trace(
+                    metadata={"last_user_input": user_input}
+                )
                 print(f"System: {goodbye_message.content}")
                 feedback = input("Was this answer helpful? (Yes/No): ")
                 feedback = feedback.strip().lower()
@@ -338,6 +348,10 @@ def main():
                         "langfuse_tags": ["task-three"],
                     },
                 },
+            )
+            lf = get_client()
+            lf.update_current_trace(
+                output=response.content
             )
 
             print(f"System: {response.content}")
