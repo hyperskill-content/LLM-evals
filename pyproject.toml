@@ -1,0 +1,25 @@
+[project]
+name = "llm-evals"
+version = "0.1.0"
+description = ""
+authors = [{name = "Ignacio Ponisio", email = "ponisio.ignacio@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "langchain-openai (>=1.1.10,<2.0.0)",
+    "langchain-community (>=0.4.1,<0.5.0)",
+    "dotenv (>=0.9.9,<0.10.0)",
+    "langchain-qdrant (>=1.1.0,<2.0.0)",
+    "langfuse (>=3.14.5,<4.0.0)",
+    "langchain (>=1.2.10,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "llm_evals", from = "src"}]
+
+[project.scripts]
+llm-evals = "llm_evals.evals:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
