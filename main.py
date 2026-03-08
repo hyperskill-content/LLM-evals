@@ -12,12 +12,15 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse import observe, get_client
+from langfuse.langchain import CallbackHandler
+from langchain_core.runnables import RunnableConfig
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
-users = ["James", "George", "Mike", "Sherlock"]
-user_id = users[uuid.uuid4().int % len(users)]
+session_name = f"session-{uuid.uuid4().hex[:8]}"
+user_id = f"user-{uuid.uuid4().hex[:8]}"
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -34,14 +37,36 @@ embeddings_model = OpenAIEmbeddings(
     show_progress_bar=True,
 )
 
+langfuse_handler = CallbackHandler()
+
+
 # Initialize conversation history
 conversation = []
 
+def get_config(run_name: str, metadata: dict) -> RunnableConfig:
+    # "goodbye" ["config", "goodbye"]
+    config: RunnableConfig = {
+        "run_name": run_name,
+        "callbacks": [langfuse_handler],
+        "metadata": {
+            "langfuse_session_id": session_name,
+            "langfuse_user_id": user_id,
+            "langfuse_tags": metadata
+        },
+    }
+    return config
 
+def update_trace(run_name: str):
+    lf = get_client()
+    lf.update_current_trace(
+        name=run_name,
+        session_id=session_name,
+        user_id=user_id,
+    )
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="load-data-observer")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -52,6 +77,7 @@ def embed_documents(json_path: str):
         Qdrant vector store A Qdrant vector store built from the smartphone documents,
                 or an empty list if an error occurs.
     """
+    update_trace("load-data-trace")
     try:
         with open(json_path, "r") as f:
             data = json.load(f)
@@ -152,6 +178,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate_context-observer")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -164,7 +191,7 @@ def generate_context(ai_message: AIMessage) -> dict:
     """
     # construct the conversation history with the AI message containing tool calls
     conversation.append(ai_message)
-
+    update_trace("generate_context-trace")
     # Check if the AI message has any tool calls
     if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
         conversation.append(
@@ -193,6 +220,7 @@ def generate_context(ai_message: AIMessage) -> dict:
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+@observe(name="main-observer")
 def main():
     # List of available tools
     tools = [smartphone_info_tool]
@@ -257,21 +285,46 @@ def main():
     review_chain = review_prompt | llm
 
     goodbye_chain = goodbye_prompt | llm
-
+    update_trace("main-trace")
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+                goodbye_message = goodbye_chain.invoke(
+                    {"user_id": user_id},
+                    get_config("goodbye", {"goodbye": "invoke"})
+                )
+
+                while True:
+                    feedback = input("Was this answer helpful? (Yes/No): ").lower()
+                    if feedback in ["yes", "y", "no", "n"]:
+                        break  # Exit the loop for valid input
+                    else:
+                        print("Invalid input. Please try again.")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                get_client().score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment
+                )
+
                 print(f"System: {goodbye_message.content}")
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke(
+                {"user_input": user_input, "conversation": conversation},
+                get_config("context", {"context": "invoke"})
+            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke(
+                {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                get_config("review", {"review": "invoke"})
+            )
 
             print(f"System: {response.content}")
             conversation.append(response)
