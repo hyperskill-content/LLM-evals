@@ -296,6 +296,21 @@ def main():
                     get_config("goodbye", {"goodbye": "invoke"})
                 )
 
+                while True:
+                    feedback = input("Was this answer helpful? (Yes/No): ").lower()
+                    if feedback in ["yes", "y", "no", "n"]:
+                        break  # Exit the loop for valid input
+                    else:
+                        print("Invalid input. Please try again.")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                get_client().score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment
+                )
+
                 print(f"System: {goodbye_message.content}")
                 break
 
