@@ -282,6 +282,14 @@ def main():
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                feedback = input("Was this answer helpful? (Yes/No): ")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+                langfuse_client.score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment,
+                )
                 goodbye_message = goodbye_chain.invoke({"user_id": user_id},
                                                        config={
                                                            "run_name": f"goodbye-message",
