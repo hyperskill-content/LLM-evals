@@ -12,6 +12,8 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse.langchain import CallbackHandler
+from langfuse import observe, get_client
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -42,6 +44,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed-documents")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -152,6 +155,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -193,7 +197,23 @@ def generate_context(ai_message: AIMessage) -> dict:
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+# noinspection PyTypeChecker
+@observe(name="main")
 def main():
+    # Create a unique session ID for this conversation
+    session_name = f"session-{uuid.uuid4().hex[:8]}"
+
+    # Initialize Langfuse callback handler
+    langfuse_handler = CallbackHandler()
+
+    # Update the current trace with session and user info
+    langfuse_client = get_client()
+    langfuse_client.update_current_trace(
+        name="ai-response",
+        session_id=session_name,
+        user_id=user_id,
+    )
+
     # List of available tools
     tools = [smartphone_info_tool]
 
@@ -206,25 +226,25 @@ def main():
           - If multiple models are mentioned or from the conversation history, you must call SmartphoneInfo for each model separately.
           - If the user asks a general question, do nothing. 
         Do not guess or recommend a model from internal knowledge; the model name must be clear from the chat history or user input. 
-        
+
         Current question: {user_input}
     """
 
     review_system_prompt = """
         You are an expert AI assistant helping customers pick the best smartphone from our catalog. Follow these rules strictly:
-        
-        1. Focus solely on concise (under 100 words), human-like, personalized reviews/comparisons of models named in the user’s query or provided context.
+
+        1. Focus solely on concise (under 100 words), human-like, personalized reviews/comparisons of models named in the user's query or provided context.
         2. Think step by step before answering.
         3. Never guess or recommend any model not explicitly mentioned in the context or query.
         4. If no model is given, ask the user to check our online catalog for the exact model name.
         5. DO NOT assist with ordering, returns, tracking, or other general support.
-        6. If asked about anything outside smartphone features/comparisons, respond that you can’t help.
+        6. If asked about anything outside smartphone features/comparisons, respond that you can't help.
         7. If the user only wants to chat, engage briefly, but always steer back to smartphone comparisons.
         8. Never list smartphone specifications, but instead explain how they translate to real-world benefits.
-        
+
         When recommending, evaluate performance, display, battery, camera, and special functions (e.g., 5G, fast charging, expandable storage), and how they translate to real-world benefits. 
-        Always confirm the user’s needs before finalizing. 
-        
+        Always confirm the user's needs before finalizing. 
+
         Current user: {user_id}
         Current question: {user_input}
     """
@@ -263,15 +283,57 @@ def main():
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+
+                feedback = input("Was this answer helpful? (Yes/No): ")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                # Push feedback score to Langfuse
+                langfuse_client.score_current_trace(
+                    name="usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment,
+                )
+
+                goodbye_message = goodbye_chain.invoke(
+                    {"user_id": user_id},
+                    config={
+                        "run_name": "goodbye-message",
+                        "callbacks": [langfuse_handler],
+                        "metadata": {
+                            "langfuse_user_id": user_id,
+                            "langfuse_session_id": session_name,
+                        },
+                    },
+                )
                 print(f"System: {goodbye_message.content}")
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke(
+                {"user_input": user_input, "conversation": conversation},
+                config={
+                    "run_name": "context",
+                    "callbacks": [langfuse_handler],
+                    "metadata": {
+                        "langfuse_user_id": user_id,
+                        "langfuse_session_id": session_name,
+                    },
+                },
+            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke(
+                {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                config={
+                    "run_name": "final-response",
+                    "callbacks": [langfuse_handler],
+                    "metadata": {
+                        "langfuse_user_id": user_id,
+                        "langfuse_session_id": session_name,
+                    },
+                },
+            )
 
             print(f"System: {response.content}")
             conversation.append(response)
