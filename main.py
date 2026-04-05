@@ -31,7 +31,7 @@ embeddings_model = OpenAIEmbeddings(
     model="text-embedding-ada-002",
     base_url=os.getenv("OPENAI_BASE_URL"),
     api_key=os.getenv("OPENAI_API_KEY"),
-    show_progress_bar=True,
+    show_progress_bar=True
 )
 
 # Initialize conversation history
@@ -122,6 +122,10 @@ def embed_documents(json_path: str):
         return []
 
 
+# Initialize the vector store
+product_db = embed_documents("datasets/smartphones.json")
+
+
 # ---------------------------
 # Tool Definitions
 # ---------------------------
@@ -137,7 +141,6 @@ def smartphone_info_tool(model: str) -> str:
         str: The smartphone's specifications, price, and availability,
              or an error message if not found or if an error occurs.
     """
-    product_db = embed_documents("datasets/smartphones.json")
     try:
         results = product_db.similarity_search(model, k=1)
         if not results:
