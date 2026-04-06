@@ -5,11 +5,13 @@ import uuid
 
 import dotenv
 from langchain_community.docstore.document import Document
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, PromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -41,7 +43,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="embed-documents")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +157,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -196,92 +199,124 @@ def generate_context(ai_message: AIMessage) -> dict:
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+@observe(name="main")
 def main():
-    # List of available tools
-    tools = [smartphone_info_tool]
+    session_name = f"session-{uuid.uuid4().hex[:8]}"
 
-    # Bind the tools to the language model instance
-    llm_with_tools = llm.bind_tools(tools)
+    with propagate_attributes(trace_name="main", session_id=session_name, user_id=user_id):
+        langfuse_handler = CallbackHandler()
+        # List of available tools
+        tools = [smartphone_info_tool]
 
-    context_system_prompt = """
-        You're part of a smartphone recommendation system. You work is to use the SmartphoneInfo tool to retrieve information about smartphones based on user queries.
-          - If the user requests specs/comparisons/recommendations for a model explicitly mentioned in chat or can be inferred from the conversation history, call SmartphoneInfo(model)
-          - If multiple models are mentioned or from the conversation history, you must call SmartphoneInfo for each model separately.
-          - If the user asks a general question, do nothing. 
-        Do not guess or recommend a model from internal knowledge; the model name must be clear from the chat history or user input. 
-        
-        Current question: {user_input}
-    """
+        # Bind the tools to the language model instance
+        llm_with_tools = llm.bind_tools(tools)
 
-    review_system_prompt = """
-        You are an expert AI assistant helping customers pick the best smartphone from our catalog. Follow these rules strictly:
-        
-        1. Focus solely on concise (under 100 words), human-like, personalized reviews/comparisons of models named in the user’s query or provided context.
-        2. Think step by step before answering.
-        3. Never guess or recommend any model not explicitly mentioned in the context or query.
-        4. If no model is given, ask the user to check our online catalog for the exact model name.
-        5. DO NOT assist with ordering, returns, tracking, or other general support.
-        6. If asked about anything outside smartphone features/comparisons, respond that you can’t help.
-        7. If the user only wants to chat, engage briefly, but always steer back to smartphone comparisons.
-        8. Never list smartphone specifications, but instead explain how they translate to real-world benefits.
-        
-        When recommending, evaluate performance, display, battery, camera, and special functions (e.g., 5G, fast charging, expandable storage), and how they translate to real-world benefits. 
-        Always confirm the user’s needs before finalizing. 
-        
-        Current user: {user_id}
-        Current question: {user_input}
-    """
+        context_system_prompt = """
+            You're part of a smartphone recommendation system. You work is to use the SmartphoneInfo tool to retrieve information about smartphones based on user queries.
+              - If the user requests specs/comparisons/recommendations for a model explicitly mentioned in chat or can be inferred from the conversation history, call SmartphoneInfo(model)
+              - If multiple models are mentioned or from the conversation history, you must call SmartphoneInfo for each model separately.
+              - If the user asks a general question, do nothing. 
+            Do not guess or recommend a model from internal knowledge; the model name must be clear from the chat history or user input. 
+            
+            Current question: {user_input}
+        """
 
-    goodbye_system_prompt = """
-        You have been helping the user: {user_id} with smartphone features and comparisons. 
-        Generate a short friendly goodbye message for the user and also thank them for their feedback.
-        (note that you've already been helping the user with smartphone features and comparisons, so do not repeat that or greet them again)
-    """
+        review_system_prompt = """
+            You are an expert AI assistant helping customers pick the best smartphone from our catalog. Follow these rules strictly:
+            
+            1. Focus solely on concise (under 100 words), human-like, personalized reviews/comparisons of models named in the user’s query or provided context.
+            2. Think step by step before answering.
+            3. Never guess or recommend any model not explicitly mentioned in the context or query.
+            4. If no model is given, ask the user to check our online catalog for the exact model name.
+            5. DO NOT assist with ordering, returns, tracking, or other general support.
+            6. If asked about anything outside smartphone features/comparisons, respond that you can’t help.
+            7. If the user only wants to chat, engage briefly, but always steer back to smartphone comparisons.
+            8. Never list smartphone specifications, but instead explain how they translate to real-world benefits.
+            
+            When recommending, evaluate performance, display, battery, camera, and special functions (e.g., 5G, fast charging, expandable storage), and how they translate to real-world benefits. 
+            Always confirm the user’s needs before finalizing. 
+            
+            Current user: {user_id}
+            Current question: {user_input}
+        """
 
-    context_prompt = ChatPromptTemplate.from_messages(
-        [
-            (SystemMessage(context_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
-        ]
-    )
+        goodbye_system_prompt = """
+            You have been helping the user: {user_id} with smartphone features and comparisons. 
+            Generate a short friendly goodbye message for the user and also thank them for their feedback.
+            (note that you've already been helping the user with smartphone features and comparisons, so do not repeat that or greet them again)
+        """
 
-    review_prompt = ChatPromptTemplate.from_messages(
-        [
-            (SystemMessage(review_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
-        ]
-    )
+        context_prompt = ChatPromptTemplate.from_messages(
+            [
+                (SystemMessage(context_system_prompt)),
+                MessagesPlaceholder(variable_name="conversation")
+            ]
+        )
 
-    goodbye_prompt = PromptTemplate.from_template(
-        goodbye_system_prompt
-    )
+        review_prompt = ChatPromptTemplate.from_messages(
+            [
+                (SystemMessage(review_system_prompt)),
+                MessagesPlaceholder(variable_name="conversation")
+            ]
+        )
 
-    context_chain = context_prompt | llm_with_tools | generate_context
-    review_chain = review_prompt | llm
+        goodbye_prompt = PromptTemplate.from_template(
+            goodbye_system_prompt
+        )
 
-    goodbye_chain = goodbye_prompt | llm
+        context_chain = context_prompt | llm_with_tools | generate_context
+        review_chain = review_prompt | llm
 
-    try:
-        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-        while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+        goodbye_chain = goodbye_prompt | llm
 
-            conversation.append(HumanMessage(user_input))
+        try:
+            print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            while True:
+                user_input = input("User: ").strip()
+                if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                    goodbye_message = goodbye_chain.invoke(
+                        {"user_id": user_id},
+                        config={"run_name": "goodbye-message",
+                                "callbacks": [langfuse_handler],
+                                "metadata": {"langfuse_session_id": session_name,
+                                             "langfuse_user_id": user_id,
+                                             "langfuse_tags": ["dev", "test"]
+                                             }
+                                }
+                    )
+                    print(f"System: {goodbye_message.content}")
+                    break
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                conversation.append(HumanMessage(user_input))
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                context_chain.invoke(
+                    {"user_input": user_input, "conversation": conversation},
+                    config={"run_name": "context",
+                            "callbacks": [langfuse_handler],
+                            "metadata": {"langfuse_session_id": session_name,
+                                         "langfuse_user_id": user_id,
+                                         "langfuse_tags": ["dev", "test"]
+                                         }
+                            }
+                )
 
-    except Exception as e:
-        print(f"An unexpected error occurred in the main loop: {e}")
-        sys.exit(1)
+                response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                                               config={"run_name": "ai-response",
+                                                       "callbacks": [langfuse_handler],
+                                                       "metadata": {"langfuse_session_id": session_name,
+                                                                    "langfuse_user_id": user_id,
+                                                                    "langfuse_tags": ["dev", "test"]
+                                                                    }
+                                                       }
+                                               )
+
+                print(f"System: {response.content}")
+                conversation.append(response)
+
+        except Exception as e:
+            print(f"An unexpected error occurred in the main loop: {e}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
