@@ -8,9 +8,10 @@ from langchain_community.docstore.document import Document
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, PromptTemplate
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langfuse import observe, propagate_attributes
+from langfuse import observe, propagate_attributes, get_client
 from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -197,6 +198,15 @@ def generate_context(ai_message: AIMessage) -> dict:
 
 
 # ---------------------------
+# User Feedback Handling
+# ---------------------------
+def get_user_feedback() -> tuple[str, str]:
+    feedback = input("Was this answer helpful? (Yes/No): ")
+    user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+    return feedback, user_comment
+
+
+# ---------------------------
 # Main Conversation Loop
 # ---------------------------
 @observe(name="main")
@@ -204,7 +214,6 @@ def main():
     session_name = f"session-{uuid.uuid4().hex[:8]}"
 
     with propagate_attributes(trace_name="main", session_id=session_name, user_id=user_id):
-        langfuse_handler = CallbackHandler()
         # List of available tools
         tools = [smartphone_info_tool]
 
@@ -271,20 +280,27 @@ def main():
 
         try:
             print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-
+            langfuse_handler = CallbackHandler()
+            langfuse_client = get_client()
             while True:
                 user_input = input("User: ").strip()
                 if user_input.lower() in ["exit", "quit", "bye", "end"]:
                     goodbye_message = goodbye_chain.invoke(
                         {"user_id": user_id},
-                        config={"run_name": "goodbye-message",
-                                "callbacks": [langfuse_handler],
-                                "metadata": {"langfuse_session_id": session_name,
-                                             "langfuse_user_id": user_id,
-                                             "langfuse_tags": ["dev", "test"]
-                                             }
-                                }
+                        config=RunnableConfig(
+                            run_name="goodbye-message",
+                            callbacks=[langfuse_handler],
+                            metadata={"langfuse_tags": ["dev", "test"]}
+                        )
                     )
+                    feedback, user_comment = get_user_feedback()
+                    langfuse_client.score_current_trace(
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment
+                    )
+                    langfuse_client.flush()
                     print(f"System: {goodbye_message.content}")
                     break
 
@@ -292,24 +308,21 @@ def main():
 
                 context_chain.invoke(
                     {"user_input": user_input, "conversation": conversation},
-                    config={"run_name": "context",
-                            "callbacks": [langfuse_handler],
-                            "metadata": {"langfuse_session_id": session_name,
-                                         "langfuse_user_id": user_id,
-                                         "langfuse_tags": ["dev", "test"]
-                                         }
-                            }
+                    config={
+                        "run_name": "context",
+                        "callbacks": [langfuse_handler],
+                        "metadata": { "langfuse_tags": ["dev", "test"] }
+                    }
                 )
 
-                response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation},
-                                               config={"run_name": "ai-response",
-                                                       "callbacks": [langfuse_handler],
-                                                       "metadata": {"langfuse_session_id": session_name,
-                                                                    "langfuse_user_id": user_id,
-                                                                    "langfuse_tags": ["dev", "test"]
-                                                                    }
-                                                       }
-                                               )
+                response = review_chain.invoke(
+                    {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                    config=RunnableConfig(
+                        run_name="ai-response",
+                        callbacks=[langfuse_handler],
+                        metadata={"langfuse_tags": ["dev", "test"]}
+                    )
+                )
 
                 print(f"System: {response.content}")
                 conversation.append(response)
