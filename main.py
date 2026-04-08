@@ -204,7 +204,7 @@ def main():
     llm_with_tools = llm.bind_tools(tools)
 
     context_system_prompt = """
-        You're part of a smartphone recommendation system. You work is to use the SmartphoneInfo tool to retrieve information about smartphones based on user queries.
+        You're part of a smartphone recommendation system. Your work is to use the SmartphoneInfo tool to retrieve information about smartphones based on user queries.
           - If the user requests specs/comparisons/recommendations for a model explicitly mentioned in chat or can be inferred from the conversation history, call SmartphoneInfo(model)
           - If multiple models are mentioned or from the conversation history, you must call SmartphoneInfo for each model separately.
           - If the user asks a general question, do nothing. 
