@@ -10,7 +10,7 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langfuse import observe
+from langfuse import observe, Langfuse
 from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -20,6 +20,7 @@ dotenv.load_dotenv()
 
 # Initialize Langfuse Callback Handler
 langfuse_handler = CallbackHandler()
+langfuse_client = Langfuse()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
@@ -289,6 +290,18 @@ def main():
                         },
                     }
                 )
+                # collect feedback
+                feedback = input("Was this answer helpful? (Yes/No): ")
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                # associate the score with that trace and push scores and comments to Langfuse
+                langfuse_client.score_current_trace(
+                    name="usefulness",
+                    value=feedback.upper(),
+                    data_type="CATEGORICAL",
+                    comment=user_comment
+                )
+
                 print(f"System: {goodbye_message.content}")
                 break
 
