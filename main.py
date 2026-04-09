@@ -10,7 +10,7 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langfuse import observe, propagate_attributes
+from langfuse import observe, get_client, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -18,6 +18,7 @@ from qdrant_client.http.models import Distance, VectorParams
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
+langfuse_client = get_client()
 langfuse_handler = CallbackHandler()
 
 session_id = f"session-{uuid.uuid4().hex[:8]}"
@@ -307,6 +308,14 @@ def main():
                                 "langfuse_user_id": user_id
                             }
                         }
+                    )
+                    feedback = input("Was this answer helpful? (Yes/No): ")
+                    user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+                    langfuse_client.score_current_trace(
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment
                     )
                     print(f"System: {goodbye_message.content}")
                     break
