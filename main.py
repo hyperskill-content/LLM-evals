@@ -10,6 +10,8 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -193,6 +195,15 @@ def generate_context(ai_message: AIMessage) -> dict:
         )
 
 
+# langfuse_client = Langfuse(
+#     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+#     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+#     host=os.getenv("LANGFUSE_HOST")
+# )
+
+langfuse_handler = CallbackHandler()
+
+
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
@@ -272,9 +283,12 @@ def main():
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke({"user_input": user_input, "conversation": conversation},
+                                 config={"callbacks": [langfuse_handler],
+                                         "metadata": {"user_id": user_id}})
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                                           config={"callbacks": [langfuse_handler], "metadata": {"user_id": user_id}})
 
             print(f"System: {response.content}")
             conversation.append(response)
