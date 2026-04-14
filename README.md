@@ -3,6 +3,7 @@
 ## Table of Contents
 
 - [Introduction](#introduction)
+- [Setup](#setup)
 - [Learning Outcomes](#learning-outcomes)
 - [Project Structure](#project-structure)
 - [Tasks](#tasks)
@@ -32,6 +33,79 @@ The full code for the application (built with LangChain) is provided for you. He
 
 This is part one of a series on building production-ready LLM apps. Here, your overall goal is to add monitoring and run various evaluations on this application to ensure it performs as expected. Logs allow you to monitor usage costs, latency, inputs, outputs, and other aspects of the app. You can then use this information to enhance your application over time.
 
+## **Setup**
+
+This project uses [uv](https://docs.astral.sh/uv/) for Python package management. Follow these steps to get started:
+
+### Prerequisites
+
+1. Install uv:
+   ```bash
+   # On macOS and Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   # On Windows
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+2. Verify installation:
+   ```bash
+   uv --version
+   ```
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd LLM-evals
+   ```
+
+2. Install dependencies using `uv`:
+   ```bash
+   uv sync
+   ```
+
+   This will:
+   - Create a virtual environment in `.venv/`
+   - Install all dependencies from `pyproject.toml`
+   - Generate/update the `uv.lock` file for reproducible builds
+
+3. Set up environment variables:
+   ```bash
+   cp .env.sample .env
+   # Edit .env with your API keys and configuration
+   ```
+
+### Running the Application
+
+```bash
+uv run python main.py
+```
+
+If your IDE (VS Code, PyCharm) isn't recognizing the environment or you need to use tools that aren't uv-aware, activate the virtual environment manually:
+```bash
+source .venv/bin/activate  # On macOS/Linux
+# or
+.venv\Scripts\activate  # On Windows
+
+# Run the application
+python main.py
+```
+
+### Adding New Dependencies
+
+To add new packages to the project:
+
+```bash
+uv add <package-name>
+```
+
+For development dependencies:
+
+```bash
+uv add --dev <package-name>
+```
 ## **Learning Outcomes**
 
 By the end of this project, you'll build a complete evaluation pipeline for an LLM application. You'll gain hands-on experience with evaluation techniques such as analytics, human-as-a-judge, and LLM-as-a-judge. You’ll use tools like Langfuse and Ragas to supercharge LLM evaluation. This project will help you ensure that your LLM-powered app offers accurate recommendations and consistently meets high-performance and reliability standards.
@@ -41,27 +115,24 @@ By the end of this project, you'll build a complete evaluation pipeline for an L
 Here are the main directories and files in this repo:
 
 ```markdown
-├── images/
-│   ├── langfuse_scores_annotation.png
-│   ├── feedback_scores_in_ui.png
-│   ├── trace_details.png
-│   ├── eval_scores.png
-│   ├── setting_up_an_evaluator.png
-│   ├── variable_mapping.png
-│   └── traces.png
-├── tasks/
-│   ├── task_1.md
-│   ├── task_2.md
-│   ├── task_3.md
-│   ├── task_4.md
-│   └── task_5.md
-├── datasets/
-│   ├── smartphones.json
-├── .env.sample
-├── .gitignore
-├── main.py
-├── README.md
-└── requirements.txt
+  ├── assets/
+  │   └── images/
+  ├── datasets/
+  │   └── smartphones.json
+  ├── src/
+  │   └── llm_evals/
+  ├── tasks/
+  │   ├── task_1.md
+  │   ├── task_2.md
+  │   ├── task_3.md
+  │   ├── task_4.md
+  │   └── task_5.md
+  ├── .env.sample
+  ├── .gitignore
+  ├── main.py
+  ├── pyproject.toml
+  ├── README.md
+  └── uv.lock
 ```
 
 ## **Tasks**
