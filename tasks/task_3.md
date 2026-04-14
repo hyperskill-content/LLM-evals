@@ -21,7 +21,7 @@ There are various evaluation methods that we could use to assess how well an LLM
 
 Regardless of the method you use, Langfuse uses a scoring system to store the values you get after running the evaluations (along with optional comments). Scores could be numeric, categorical, or boolean. Scores are associated with a particular trace. To learn more about scores, check out the [documentation.](https://langfuse.com/docs/scores/data-model)
 
-Once you’ve determined the type of scores you would like to use, the next step is to to run evaluations. This would involve collecting feedback or running model-based evaluations. For now, let’s focus on user feedback:
+Once you've determined the type of scores you would like to use, the next step is to run evaluations. This would involve collecting feedback or running model-based evaluations. For now, let's focus on user feedback:
 
 ```python
 feedback = input("Was this answer helpful? (Yes/No): ")
@@ -43,7 +43,7 @@ You should see the user feedback in the UI for that particular trace:
 
 ![Trace score in Langfuse UI](../assets/images/score_in_langfuse_ui.png)
 
-Once you see the user feedback, you can check the trace’s inputs and outputs to understand the ratings thus make informed decisions. Regardless of how you collect user feedback or the evaluations you run, the flow is similar:
+Once you see the user feedback, you can check the trace's inputs and outputs to understand the ratings and thus make informed decisions. Regardless of how you collect user feedback or the evaluations you run, the flow is similar:
 
 - Collect feedback/run evaluations;
 - Push the scores to Langfuse for that trace.

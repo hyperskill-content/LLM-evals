@@ -31,7 +31,9 @@ Here are the scores in Langfuse UI:
 You can always use more dimensions, but these are a nice place to start. Once you identify and annotate relevant traces, you can then add the final response observation to a [dataset](https://langfuse.com/docs/datasets/overview) for use later.
 
 ### Deliverables
+
 There are no code deliverables for this task. But you should now be able to annotate traces in the Langfuse UI. You should also know how to create a dataset from the annotated traces, which you will use later for model-based evaluations.
+
 ### Useful Resources
 
 ### Docs

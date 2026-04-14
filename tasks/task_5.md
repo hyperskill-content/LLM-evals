@@ -26,7 +26,7 @@ To evaluate the retriever, Ragas uses metrics like [context precision](https://d
 
 For the generation phase, it moves far beyond simple text similarity. [Faithfulness](https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/faithfulness/) directly tackles the problem of hallucination by verifying that every statement in the generated answer is supported by the provided context. Meanwhile, [response relevancy](https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/answer_relevance/) ensures the answer is not just faithful but also on-topic and directly addresses the user's query.
 
-Furthermore, as systems evolve into more complex agentic systems that can utilize tools, the scope of evaluation must expand accordingly. [Tool call accuracy](https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/agents/#tool-call-accuracy) ****evaluates whether the appropriate tool for a given task was selected and that the correct parameters were supplied for each tool call.
+Furthermore, as systems evolve into more complex agentic systems that can utilize tools, the scope of evaluation must expand accordingly. [Tool call accuracy](https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/agents/#tool-call-accuracy) evaluates whether the appropriate tool for a given task was selected and that the correct parameters were supplied for each tool call.
 
 ### Development Steps
 

@@ -12,11 +12,11 @@
 
 ### Description
 
-Langfuse allows you to trace every LLM call and other functions in your app. You can monitor chains, agents, and others. You can track the complete execution flow for API calls, track model usage, and more. It doesn’t matter if you built your app in pure Python, OpenAI SDKs, or LLM frameworks such as [LangChain](https://langfuse.com/docs/integrations/langchain/tracing) and [LlammaIndex](https://langfuse.com/docs/integrations/llama-index/get-started); Langfuse allows you to monitor all of them. Since our chatbot is built with LangChain, we will focus on that here.
+Langfuse allows you to trace every LLM call and other functions in your app. You can monitor chains, agents, and others. You can track the complete execution flow for API calls, track model usage, and more. It doesn't matter if you built your app in pure Python, OpenAI SDKs, or LLM frameworks such as [LangChain](https://langfuse.com/docs/integrations/langchain/tracing) and [LlamaIndex](https://langfuse.com/docs/integrations/llama-index/get-started); Langfuse allows you to monitor all of them. Since our chatbot is built with LangChain, we will focus on that here.
 
 ### Useful Notes
 
-Collecting metrics from LangChain applications is achieved using callbacks**.** **Callbacks** in LangChain allow you to perform custom actions at different phases of your LLM application. This is valuable for logging, monitoring, streaming, and more. Check out LangChain’s [documentation](https://python.langchain.com/docs/concepts/callbacks/) for an overview of callbacks.
+Collecting metrics from LangChain applications is achieved using callbacks. **Callbacks** in LangChain allow you to perform custom actions at different phases of your LLM application. This is valuable for logging, monitoring, streaming, and more. Check out LangChain's [documentation](https://python.langchain.com/docs/concepts/callbacks/) for an overview of callbacks.
 
 Don’t worry, we won’t be creating any callbacks from scratch. All you need to do is add Langfuse's callback handler wherever you make an LLM call:
 
@@ -29,7 +29,7 @@ response = llm.invoke(prompt, config={"callbacks": [langfuse_handler]})
 
 The above snippet uses v3 of the Langfuse SDK. We’re initializing a callback handler and passing it when invoking the LLM. Ensure you’ve set the keys and host for your Langfuse instance in your `.env` file.
 
-That’s it! Now, every time an LLM call is made, the traces will be captured by Langfus, and you can view them in the web interface. Besides `.invoke()` methods, you can also add the callback handler to `.run()`, `.call()`, `.predict()`, `.async`, `.batch()`, and streaming interfaces in LangChain.
+That's it! Now, every time an LLM call is made, the traces will be captured by Langfuse, and you can view them in the web interface. Besides `.invoke()` methods, you can also add the callback handler to `.run()`, `.call()`, `.predict()`, `.async`, `.batch()`, and streaming interfaces in LangChain.
 
 You can also further customize the callback handler, such as adding a session ID to the trace allows you to group multiple LLM interactions that are part of the same conversation. Additionally, you can specify run names, user ID, tags, inputs, outputs, [and others](https://langfuse.com/docs/integrations/langchain/tracing#dynamic-trace-attributes) via the metadata field. Here’s an example of how to do that:
 

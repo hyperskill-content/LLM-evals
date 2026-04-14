@@ -38,13 +38,18 @@ llm = ChatGroq(
 Next, you need to ensure that Qdrant is set up and running. But before that, ensure that you have [Docker](https://docs.docker.com/desktop/) installed and running. Then, run the following Docker command from the terminal to pull and run Qdrant:
 
 ```bash
-# if you use PowerShell as your shell, replace backslashes (\) with backticks (`) as line seperators
+# if you use PowerShell, replace backslashes (\) with backticks (`) as line separators
 docker run --restart always -d -p 6333:6333 -p 6334:6334 \
     -v "$(pwd)/qdrant_storage:/qdrant/storage:z" \
     qdrant/qdrant 
 ```
 
-You may have issues if you run this command in the same folder as the `main.py` file. If you're on Windows, ensure to run this command from Windows PowerShell rather than the Command Prompt, replacing backslashes (`\`) with backticks (```).
+You may have issues if you run this command in the same folder as the `main.py` file. If you're on Windows, ensure to run this command from Windows PowerShell rather than the Command Prompt, replacing backslashes (`\`) with backticks (```):
+```bash
+docker run --restart always -d -p 6333:6333 -p 6334:6334 `
+    -v "$(pwd)\qdrant_storage:/qdrant/storage:z" `
+qdrant/qdrant
+```
 
 Finally, we need to set up the environment ready for monitoring. There are various ways to work with Langfuse. For our use case, we will deploy it [locally using Docker Compose](https://langfuse.com/self-hosting/local). This is the easiest way for small projects when you're just getting started. All you need to do is clone the `git` repo and start the services:
 
