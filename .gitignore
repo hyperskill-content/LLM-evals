@@ -208,3 +208,7 @@ __marimo__/
 
 # Qdrant
 qdrant_storage/
+
+# Idea
+.idea
+.junie
