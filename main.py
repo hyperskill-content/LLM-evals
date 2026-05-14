@@ -10,7 +10,7 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langfuse import observe, propagate_attributes
+from langfuse import observe, propagate_attributes, get_client
 from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -307,6 +307,19 @@ def main():
                         {"user_id": user_id},
                         config=lf_config("goodbye-message"),
                     )
+
+                    feedback = input("Was this answer helpful? (Yes/No): ").strip()
+                    user_comment = input(
+                        "Please give us a reason for your answer. This will help us improve: "
+                    ).strip()
+
+                    get_client().score_current_trace(
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment,
+                    )
+
                     print(f"System: {goodbye_message.content}")
                     break
 
