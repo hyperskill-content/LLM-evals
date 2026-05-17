@@ -14,6 +14,7 @@ dependencies = [
     "langchain-qdrant",
     "requests",
     "langchain",
+    "ragas>=0.4.3",
 ]
 
 [dependency-groups]
