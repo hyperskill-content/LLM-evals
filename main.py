@@ -10,7 +10,7 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langfuse import observe, propagate_attributes
+from langfuse import Langfuse, observe, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -22,6 +22,7 @@ users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 session_id = f"session-{uuid.uuid4().hex[:8]}"
 langfuse_handler = CallbackHandler()
+langfuse_client = Langfuse()
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -278,6 +279,10 @@ def main():
             while True:
                 user_input = input("User: ").strip()
                 if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                    # Collect user feedback
+                    feedback = input("Was this answer helpful? (Yes/No): ").strip()
+                    user_comment = input("Please give us a reason for your answer. This will help us improve: ").strip()
+
                     goodbye_message = goodbye_chain.invoke(
                         {"user_id": user_id},
                         config={
@@ -289,6 +294,17 @@ def main():
                             },
                         },
                     )
+
+                    # Score the trace with user feedback
+                    langfuse_client.create_score(
+                        trace_id=langfuse_handler.last_trace_id,
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment,
+                    )
+                    langfuse_client.flush()
+
                     print(f"System: {goodbye_message.content}")
                     break
 
