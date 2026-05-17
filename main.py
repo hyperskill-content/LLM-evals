@@ -10,6 +10,8 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import Langfuse, observe, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -18,6 +20,9 @@ dotenv.load_dotenv()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+session_id = f"session-{uuid.uuid4().hex[:8]}"
+langfuse_handler = CallbackHandler()
+langfuse_client = Langfuse()
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -42,6 +47,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed-documents")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +161,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -196,6 +203,7 @@ def generate_context(ai_message: AIMessage) -> dict:
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+@observe(name="main")
 def main():
     # List of available tools
     tools = [smartphone_info_tool]
@@ -263,21 +271,71 @@ def main():
 
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-        while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+        with propagate_attributes(
+            user_id=user_id,
+            session_id=session_id,
+            trace_name="ai-response",
+        ):
+            while True:
+                user_input = input("User: ").strip()
+                if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                    # Collect user feedback
+                    feedback = input("Was this answer helpful? (Yes/No): ").strip()
+                    user_comment = input("Please give us a reason for your answer. This will help us improve: ").strip()
 
-            conversation.append(HumanMessage(user_input))
+                    goodbye_message = goodbye_chain.invoke(
+                        {"user_id": user_id},
+                        config={
+                            "run_name": "goodbye-message",
+                            "callbacks": [langfuse_handler],
+                            "metadata": {
+                                "langfuse_session_id": session_id,
+                                "langfuse_user_id": user_id,
+                            },
+                        },
+                    )
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    # Score the trace with user feedback
+                    langfuse_client.create_score(
+                        trace_id=langfuse_handler.last_trace_id,
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment,
+                    )
+                    langfuse_client.flush()
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    print(f"System: {goodbye_message.content}")
+                    break
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                conversation.append(HumanMessage(user_input))
+
+                context_chain.invoke(
+                    {"user_input": user_input, "conversation": conversation},
+                    config={
+                        "run_name": "context",
+                        "callbacks": [langfuse_handler],
+                        "metadata": {
+                            "langfuse_session_id": session_id,
+                            "langfuse_user_id": user_id,
+                        },
+                    },
+                )
+
+                response = review_chain.invoke(
+                    {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                    config={
+                        "run_name": "final-response",
+                        "callbacks": [langfuse_handler],
+                        "metadata": {
+                            "langfuse_session_id": session_id,
+                            "langfuse_user_id": user_id,
+                        },
+                    },
+                )
+
+                print(f"System: {response.content}")
+                conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
