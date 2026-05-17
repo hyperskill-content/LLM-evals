@@ -5,34 +5,31 @@ import uuid
 
 import dotenv
 from langchain_community.docstore.document import Document
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
-from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, PromptTemplate
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, \
+    PromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe, propagate_attributes, get_client
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
-users = ["James", "George", "Mike", "Sherlock"]
-user_id = users[uuid.uuid4().int % len(users)]
+current_user_id = None
+current_session_id = None
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
-llm = ChatOpenAI(
-    model=os.getenv("OPENAI_MODEL"),
-    base_url=os.getenv("OPENAI_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL"),
+    base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"))
 
 # Initialize the embeddings model with OpenAI API credentials
-embeddings_model = OpenAIEmbeddings(
-    model=os.getenv("OPENAI_EMBEDDINGS_MODEL"),
-    base_url=os.getenv("OPENAI_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY"),
-    show_progress_bar=True
-)
+embeddings_model = OpenAIEmbeddings(model=os.getenv("OPENAI_EMBEDDINGS_MODEL"),
+    base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"),
+    show_progress_bar=True)
 
 # Initialize conversation history
 conversation = []
@@ -41,7 +38,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="embed-documents")
 def embed_documents(json_path: str):
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -68,41 +65,33 @@ def embed_documents(json_path: str):
     documents = []
     for entry in data:
         # Build a readable content string from the JSON entry
-        content = (
-            f"Model: {entry.get('model', '')}\n"
-            f"Price: {entry.get('price', '')}\n"
-            f"Rating: {entry.get('rating', '')}\n"
-            f"SIM: {entry.get('sim', '')}\n"
-            f"Processor: {entry.get('processor', '')}\n"
-            f"RAM: {entry.get('ram', '')}\n"
-            f"Battery: {entry.get('battery', '')}\n"
-            f"Display: {entry.get('display', '')}\n"
-            f"Camera: {entry.get('camera', '')}\n"
-            f"Card: {entry.get('card', '')}\n"
-            f"OS: {entry.get('os', '')}\n"
-            f"In Stock: {entry.get('in_stock', '')}"
-        )
+        content = (f"Model: {entry.get('model', '')}\n"
+                   f"Price: {entry.get('price', '')}\n"
+                   f"Rating: {entry.get('rating', '')}\n"
+                   f"SIM: {entry.get('sim', '')}\n"
+                   f"Processor: {entry.get('processor', '')}\n"
+                   f"RAM: {entry.get('ram', '')}\n"
+                   f"Battery: {entry.get('battery', '')}\n"
+                   f"Display: {entry.get('display', '')}\n"
+                   f"Camera: {entry.get('camera', '')}\n"
+                   f"Card: {entry.get('card', '')}\n"
+                   f"OS: {entry.get('os', '')}\n"
+                   f"In Stock: {entry.get('in_stock', '')}")
         documents.append(Document(page_content=content))
 
     try:
         collection_name = "smartphones"
         qdrant_client = QdrantClient("http://localhost:6333")
 
-        collection_exists = qdrant_client.collection_exists(collection_name=collection_name)
+        collection_exists = qdrant_client.collection_exists(
+            collection_name=collection_name)
         if not collection_exists:
-            qdrant_client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=1536,
-                    distance=Distance.COSINE,
-                ),
-            )
+            qdrant_client.create_collection(collection_name=collection_name,
+                vectors_config=VectorParams(size=1536,
+                    distance=Distance.COSINE, ), )
 
-            qdrant_store = QdrantVectorStore(
-                client=qdrant_client,
-                collection_name=collection_name,
-                embedding=embeddings_model
-            )
+            qdrant_store = QdrantVectorStore(client=qdrant_client,
+                collection_name=collection_name, embedding=embeddings_model)
 
             qdrant_store.add_documents(documents=documents)
 
@@ -111,9 +100,7 @@ def embed_documents(json_path: str):
         # no need to create a vector store every time
         else:
             qdrant_store = QdrantVectorStore.from_existing_collection(
-                embedding=embeddings_model,
-                collection_name=collection_name,
-            )
+                embedding=embeddings_model, collection_name=collection_name, )
 
             return qdrant_store
 
@@ -122,8 +109,7 @@ def embed_documents(json_path: str):
         return []
 
 
-# Initialize the vector store
-product_db = embed_documents("datasets/smartphones.json")
+product_db = None
 
 
 # ---------------------------
@@ -141,6 +127,9 @@ def smartphone_info_tool(model: str) -> str:
         str: The smartphone's specifications, price, and availability,
              or an error message if not found or if an error occurs.
     """
+    if product_db is None:
+        return "Product database is not initialized."
+
     try:
         results = product_db.similarity_search(model, k=1)
         if not results:
@@ -155,6 +144,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")
 def generate_context(ai_message: AIMessage) -> dict:
     """
     Process tool calls from the language model and collect their responses as ToolMessage objects.
@@ -170,11 +160,8 @@ def generate_context(ai_message: AIMessage) -> dict:
 
     # Check if the AI message has any tool calls
     if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
-        conversation.append(
-            AIMessage(
-                content="No tool calls found. Please ensure the model is configured to use tools."
-            )
-        )
+        conversation.append(AIMessage(
+            content="No tool calls found. Please ensure the model is configured to use tools."))
 
     try:
         # Process each tool call, invoke the appropriate tool, and append the result to the conversation
@@ -186,17 +173,25 @@ def generate_context(ai_message: AIMessage) -> dict:
 
     except Exception as e:
         print(f"An error occurred while processing tool calls: {e}")
-        conversation.append(
-            AIMessage(
-                content=f"An error occurred while processing tool calls: {e}"
-            )
-        )
+        conversation.append(AIMessage(
+            content=f"An error occurred while processing tool calls: {e}"))
 
 
 # ---------------------------
 # Main Conversation Loop
 # ---------------------------
+@observe(name="main")
 def main():
+    global current_user_id
+    global current_session_id
+    global product_db
+
+    users = ["James", "George", "Mike", "Sherlock"]
+    current_user_id = users[uuid.uuid4().int % len(users)]
+    current_session_id = f"session-{uuid.uuid4().hex[:8]}"
+
+    langfuse_handler = CallbackHandler()
+    langfuse_client = get_client()
     # List of available tools
     tools = [smartphone_info_tool]
 
@@ -239,22 +234,14 @@ def main():
     """
 
     context_prompt = ChatPromptTemplate.from_messages(
-        [
-            (SystemMessage(context_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
-        ]
-    )
+        [(SystemMessage(context_system_prompt)),
+            MessagesPlaceholder(variable_name="conversation")])
 
     review_prompt = ChatPromptTemplate.from_messages(
-        [
-            (SystemMessage(review_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
-        ]
-    )
+        [(SystemMessage(review_system_prompt)),
+            MessagesPlaceholder(variable_name="conversation")])
 
-    goodbye_prompt = PromptTemplate.from_template(
-        goodbye_system_prompt
-    )
+    goodbye_prompt = PromptTemplate.from_template(goodbye_system_prompt)
 
     context_chain = context_prompt | llm_with_tools | generate_context
     review_chain = review_prompt | llm
@@ -262,22 +249,54 @@ def main():
     goodbye_chain = goodbye_prompt | llm
 
     try:
-        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-        while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+        with propagate_attributes(user_id=current_user_id,
+                session_id=current_session_id, trace_name="ai-response", ):
+            # Initialize the vector store
+            product_db = embed_documents("datasets/smartphones.json")
+            print(
+                "Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
+            while True:
+                user_input = input("User: ").strip()
+                if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                    goodbye_message = goodbye_chain.invoke(
+                        {"user_id": current_user_id},
+                        config={"run_name": "goodbye-message",
+                            "callbacks": [langfuse_handler], "metadata": {
+                                "langfuse_session_id": current_session_id,
+                                "langfuse_user_id": current_user_id, }})
+                    feedback = input(
+                        "Was this answer helpful? (Yes/No): ").strip()
+                    user_comment = input(
+                        "Please give us a reason for your answer. This will help us improve: ").strip()
+                    langfuse_client.create_score(
+                        trace_id=langfuse_handler.last_trace_id,
+                        name="usefulness",
+                        value=feedback,
+                        data_type="CATEGORICAL",
+                        comment=user_comment, )
+                    langfuse_client.flush()
+                    print(f"System: {goodbye_message.content}")
+                    break
 
-            conversation.append(HumanMessage(user_input))
+                conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                context_chain.invoke(
+                    {"user_input": user_input, "conversation": conversation},
+                    config={"run_name": "context",
+                        "callbacks": [langfuse_handler],
+                        "metadata": {"langfuse_session_id": current_session_id,
+                            "langfuse_user_id": current_user_id, }})
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                response = review_chain.invoke(
+                    {"user_id": current_user_id, "user_input": user_input,
+                     "conversation": conversation},
+                    config={"run_name": "final-response",
+                        "callbacks": [langfuse_handler],
+                        "metadata": {"langfuse_session_id": current_session_id,
+                            "langfuse_user_id": current_user_id, }})
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                print(f"System: {response.content}")
+                conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
