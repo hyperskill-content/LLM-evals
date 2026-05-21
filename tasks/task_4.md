@@ -15,11 +15,11 @@ Another important aspect of LLM evaluation is manual data annotation. Here, expe
 
 ### Useful Notes
 
-Langfuse allows you to easily annotate traces via the UI. Just open a trace or observation and add scores to it. You must first create a score configuration for various score types. Score configs cannot be deleted or edited once you create them. Check out [the documentation](https://langfuse.com/docs/scores/annotation#single-trace) for more details on annotations in Langfuse.
+Langfuse allows you to easily annotate traces via the UI. Just open a trace or observation and add scores to it. You must first create a score configuration for various score types. Score configs can be updated at any time and can be archived (and restored) if you no longer want to use them in annotation. Check out [the documentation](https://langfuse.com/docs/evaluation/evaluation-methods/annotation) for more details on annotations in Langfuse.
 
 ### Development Steps
 
-In this stage, we’d like to annotate the responses our LLM produces across three dimensions:
+In this stage, we'd like to annotate the responses our LLM produces across three dimensions:
 
 - Faithfulness — how factually consistent is the response with the retrieved context?
 - Answer relevancy — does the response address the question?
@@ -38,5 +38,6 @@ There are no code deliverables for this task. But you should now be able to anno
 
 ### Docs
 
-- [Human annotation](https://langfuse.com/docs/scores/annotation).
-- [Datasets](https://langfuse.com/docs/datasets/overview).
+- [Human annotation](https://langfuse.com/docs/evaluation/evaluation-methods/annotation) - How to annotate traces and observations in the UI.
+- [Score configs](https://langfuse.com/faq/all/manage-score-configs) - How to create and manage score configurations.
+- [Datasets](https://langfuse.com/docs/datasets/overview) - How to create and use datasets for evaluation.

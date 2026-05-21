@@ -16,9 +16,9 @@ Langfuse allows you to trace every LLM call and other functions in your app. You
 
 ### Useful Notes
 
-Collecting metrics from LangChain applications is achieved using callbacks. **Callbacks** in LangChain allow you to perform custom actions at different phases of your LLM application. This is valuable for logging, monitoring, streaming, and more. Check out LangChain's [documentation](https://python.langchain.com/docs/concepts/callbacks/) for an overview of callbacks.
+Collecting metrics from LangChain applications is achieved using callbacks. **Callbacks** in LangChain allow you to perform custom actions at different phases of your LLM application. This is valuable for logging, monitoring, streaming, and more.
 
-Don’t worry, we won’t be creating any callbacks from scratch. All you need to do is add Langfuse's callback handler wherever you make an LLM call:
+Don't worry, we won't be creating any callbacks from scratch. All you need to do is add Langfuse's callback handler wherever you make an LLM call:
 
 ```python
 from langfuse.langchain import CallbackHandler
@@ -27,11 +27,19 @@ langfuse_handler = CallbackHandler()
 response = llm.invoke(prompt, config={"callbacks": [langfuse_handler]})
 ```
 
-The above snippet uses v3 of the Langfuse SDK. We’re initializing a callback handler and passing it when invoking the LLM. Ensure you’ve set the keys and host for your Langfuse instance in your `.env` file.
+We're initializing a callback handler and passing it when invoking the LLM. Ensure you've set the keys and host for your Langfuse instance in your `.env` file:
+
+```bash
+LANGFUSE_SECRET_KEY="sk-lf-..."
+LANGFUSE_PUBLIC_KEY="pk-lf-..."
+LANGFUSE_BASE_URL="https://cloud.langfuse.com"  # or your self-hosted URL
+```
 
 That's it! Now, every time an LLM call is made, the traces will be captured by Langfuse, and you can view them in the web interface. Besides `.invoke()` methods, you can also add the callback handler to `.run()`, `.call()`, `.predict()`, `.async`, `.batch()`, and streaming interfaces in LangChain.
 
-You can also further customize the callback handler, such as adding a session ID to the trace allows you to group multiple LLM interactions that are part of the same conversation. Additionally, you can specify run names, user ID, tags, inputs, outputs, [and others](https://langfuse.com/docs/integrations/langchain/tracing#dynamic-trace-attributes) via the metadata field. Here’s an example of how to do that:
+You can also add trace attributes such as session ID, user ID, and tags to group and identify your traces. There are two ways to do this:
+
+**Option 1: Using metadata field in the chain invocation**
 
 ```python
 response = llm.invoke(prompt, config={
@@ -45,6 +53,26 @@ response = llm.invoke(prompt, config={
 })
 ```
 
+**Option 2: Using `propagate_attributes()` context manager**
+
+```python
+from langfuse import get_client, propagate_attributes
+
+langfuse = get_client()
+
+with propagate_attributes(
+    session_id="your-session-id",
+    user_id="hyper-user",
+    tags=["dev", "test"]
+):
+    response = llm.invoke(prompt, config={
+        "run_name": "my-run",
+        "callbacks": [langfuse_handler]
+    })
+```
+
+Use **Option 1** when you want to set attributes per individual chain invocation. Use **Option 2** when you want attributes to automatically propagate to all operations within a scope (useful when grouping multiple operations under a single trace).
+
 Langfuse also allows you to monitor any other function that you want. Here, you need to use the `observe` decorator:
 
 ```python
@@ -55,54 +83,59 @@ def hello():
 	print("Hello, world!")
 ```
 
-You could also use this decorator alongside the callback handler to group multiple LangChain runs into a single trace. To set attributes, you can update the trace as shown:
+You could also use this decorator alongside the callback handler to group multiple LangChain runs into a single trace. To set trace attributes, use the `propagate_attributes` context manager as shown:
 
 ```python
-from langfuse import observe, get_client
+from langfuse import observe, get_client, propagate_attributes
 
-@observe(name="hello_world") # set trace name
-def hello():   
-  langfuse_client = get_client()
-  
-  langfuse_client.update_current_trace(
-      name="hello_world",
+@observe() # decorator creates a trace
+def hello():
+  langfuse = get_client()
+
+  # Use propagate_attributes to set trace attributes
+  # These will propagate to all child observations created within this scope
+  with propagate_attributes(
+      trace_name="hello_world",
       session_id="my_session",
-  )
-  print("Hello, world!") 
+  ):
+      print("Hello, world!")
+
+  # For trace I/O (deprecated - only for backward compat with legacy trace-level LLM-as-a-judge)
+  # langfuse.set_current_trace_io(input={"query": "..."}, output={"result": "..."})
 ```
 
 Refer to the [documentation](https://langfuse.com/docs/get-started) for more details on monitoring LangChain applications.
 
 ### Development Steps
 
-In this task, we need to monitor our data loader, tool invocations, and any LLM calls. Additionally, we also need to group related traces by including a session identifier or user ID. Thus, ensure that you add both a session ID and user ID in the metadata field. Finally, all LangChain runs need to be grouped into a single trace, so we will need to use the `observe` decorator for the `main` function and include metadata accordingly.
+In this task, we need to monitor our data loader, tool invocations, and any LLM calls. Since the application processes multiple user queries in a conversation loop, each query should create its own trace for better observability. However, we want to group all traces from the same conversation session together using a `session_id`, and identify traces by `user_id`. This allows you to see individual query performance while still being able to analyze the entire conversation session.
 
-To get a unique session/user every time, you can use the `uuid` library as follows:
+To get a unique session/user for the conversation, you can generate them once at the start of the application:
 
 ```python
 import uuid
 
-session_name = f"session-{uuid.uuid4().hex[:8]}"
+# Generate once at startup (before the main loop)
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 user_id = f"user-{uuid.uuid4().hex[:8]}"
 
-# or create a list of predefined users
+# or use a predefined list of users
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
-
 ```
 
-This allows you to simulate an actual web environment where the session/user ID would be different for various users. Once the task is complete, you should see metrics being sent to Langfuse, such as tokens used, cost, latency, inputs, outputs, and others.
+The same `session_id` and `user_id` should be used for all traces within that conversation, which allows Langfuse to group them together in the UI. Once the task is complete, you should see individual traces for each query, with metrics such as tokens used, cost, latency, inputs, and outputs. You can filter by session to see all queries from a single conversation.
 
-Here’s a checklist of what you need to do:
+Here's what you need to do:
 
-- Use the `observe` decorator to monitor the data loader/vector store(`embed_documents()`), tool calls(`generate_context()`) and `main()` functions.
-- Add a session ID in the `main()` function to group related traces (remember to create a unique session as described above).
-- Use the callback handler to monitor every chain invocation; there are 3 invocations. To identify the traces, you can customize the run names as follows:
-  - Context chain — `context`;
-  - Final response — `final-response`;
-  - Goodbye message — `goodbye-message`;
-- For the `observe` decorator, set the `name` parameter to the function name (e.g., `name="generate-context"` for the `generate_context()` function) and update the trace with the session ID, user ID, and run name (e.g., `ai-response`).
-- Add a user ID in the metadata field for every monitored part (you can use the `uuid` library to generate a unique user ID or use a predefined list of users).
+- Use the `observe` decorator to monitor the data loader/vector store (`embed_documents()`) and tool calls (`generate_context()`) functions. These will create their own observations.
+- Generate a unique `session_id` and `user_id` once at the start of the application (before the conversation loop begins), as shown in the example above.
+- Create a Langfuse callback handler that will be used for all LangChain invocations.
+- For each iteration of the conversation loop (each user query), use the `metadata` field to pass the session and user IDs to the LangChain invocations. There are 3 chain invocations per loop iteration:
+  - Context chain — use run name `context` and include `langfuse_session_id` and `langfuse_user_id` in metadata;
+  - Final response chain — use run name `final-response` and include the same session/user IDs in metadata;
+  - Goodbye message chain (when user exits) — use run name `goodbye-message` and include the same session/user IDs in metadata.
+- Each query will create its own trace, but all traces from the same conversation will share the same `session_id` for easy grouping in the Langfuse UI.
 - Keep the given code mostly the same and make only the necessary additions for the above requirements.
 
 Here are some examples of what you would see in the Langfuse UI:

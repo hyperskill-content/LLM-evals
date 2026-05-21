@@ -58,6 +58,6 @@ There are no code deliverables for this task. But you should now be able to run 
 
 ### **Docs**
 
-- [LLM-as-a-judge evaluation](https://langfuse.com/docs/scores/model-based-evals).
+- [LLM-as-a-judge evaluation](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge).
 - [Ragas Metrics](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/).
 - [Custom evals with Ragas](https://langfuse.com/guides/cookbook/evaluation_of_rag_with_ragas).

@@ -106,6 +106,37 @@ For development dependencies:
 ```bash
 uv add --dev <package-name>
 ```
+
+### Managing Environment Variables
+
+When adding new environment variables to your project:
+
+1. **Always update `.env.sample`** with the new variable names (without actual values):
+   ```bash
+   # Example: Adding a new service
+   NEW_SERVICE_API_KEY="<your-api-key-here>"
+   NEW_SERVICE_BASE_URL="<service-url>"
+   ```
+
+2. **Do not remove `.env.sample`** - This file serves as a template for other developers and documents all required environment variables for the project.
+
+3. **Add descriptive comments** in `.env.sample` to explain what each variable is used for, especially if it's not immediately obvious.
+
+### Documenting Code Structure Changes
+
+If you modify the default application structure or change how the application runs:
+
+1. **Update this README** with the new run instructions in the "Running the Application" section above.
+
+2. **Document any new directories or files** in the "Project Structure" section.
+
+3. **Explain the reasoning** for structural changes in your Pull Request description so reviewers understand the architectural decisions.
+
+Examples of changes that require documentation updates:
+- Moving code from `main.py` into modular files under `src/`
+- Introducing new entry points (e.g., `app.py`, `cli.py`)
+- Adding configuration files or changing how configuration is loaded
+- Creating new directories for components, utilities, or services
 ## **Learning Outcomes**
 
 By the end of this project, you'll build a complete evaluation pipeline for an LLM application. You'll gain hands-on experience with evaluation techniques such as analytics, human-as-a-judge, and LLM-as-a-judge. You’ll use tools like Langfuse and Ragas to supercharge LLM evaluation. This project will help you ensure that your LLM-powered app offers accurate recommendations and consistently meets high-performance and reliability standards.
