@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse.langchain import CallbackHandler
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -33,6 +34,8 @@ embeddings_model = OpenAIEmbeddings(
     api_key=os.getenv("OPENAI_API_KEY"),
     show_progress_bar=True
 )
+
+langfuse_handler = CallbackHandler()
 
 # Initialize conversation history
 conversation = []
@@ -266,15 +269,24 @@ def main():
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+                goodbye_message = goodbye_chain.invoke(
+                    {"user_id": user_id},
+                    config={"callbacks": [langfuse_handler]}
+                )
                 print(f"System: {goodbye_message.content}")
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke(
+                {"user_input": user_input, "conversation": conversation},
+                config={"callbacks": [langfuse_handler]}
+            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke(
+                {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                config={"callbacks": [langfuse_handler]}
+            )
 
             print(f"System: {response.content}")
             conversation.append(response)
