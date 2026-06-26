@@ -279,12 +279,18 @@ def main():
             with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
                 with propagate_attributes(session_id=session_id, user_id=user_id):
 
+                    # Log the input to the span
+                    span.update(input=user_input)
+
                     if user_input.lower() in ["exit", "quit", "bye", "end"]:
                         goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config={
                             "run_name": "goodbye-message",
                             "callbacks": [langfuse_handler]
                         })
                         print(f"System: {goodbye_message.content}")
+
+                        # Log goodbye output to the span
+                        span.update(output=goodbye_message.content)
 
                         # Collect feedback about the entire conversation
                         feedback = input("Was this conversation helpful? (Yes/No): ")
@@ -312,15 +318,11 @@ def main():
                         "callbacks": [langfuse_handler]
                     })
 
-                    # Set input/output on the span
-                    # This will automatically populate the trace
-                    span.update(
-                        input={"query": user_input},
-                        output={"response": response.content}
-                    )
-
                     print(f"System: {response.content}")
                     conversation.append(response)
+
+                    # Log the final assistant response as the output of the span
+                    span.update(output=response.content)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
