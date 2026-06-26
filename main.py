@@ -10,12 +10,15 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe, get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 
@@ -41,7 +44,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="embed_smartphone_documents")
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +158,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="tool_call_get_context")
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,23 +266,48 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
+    # Initialize Langfuse client
+    langfuse = get_client()
+
+    # Initialize Langfuse CallbackHandler for Langchain (tracing)
+    langfuse_handler = CallbackHandler()
+
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                with propagate_attributes(session_id=session_id, user_id=user_id):
 
-            conversation.append(HumanMessage(user_input))
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config={
+                            "run_name": "goodbye-message",
+                            "callbacks": [langfuse_handler]
+                        })
+                        print(f"System: {goodbye_message.content}")
+                        break
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    conversation.append(HumanMessage(user_input))
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    context_chain.invoke({"user_input": user_input, "conversation": conversation}, config={
+                        "run_name": "context",
+                        "callbacks": [langfuse_handler]
+                    })
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                    response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation}, config={
+                        "run_name": "final-response",
+                        "callbacks": [langfuse_handler]
+                    })
+
+                    # Set input/output on the span
+                    # This will automatically populate the trace
+                    span.update(
+                        input={"query": user_input},
+                        output={"response": response.content}
+                    )
+
+                    print(f"System: {response.content}")
+                    conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
