@@ -12,12 +12,15 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse.langchain import CallbackHandler
+from langfuse import observe, get_client, propagate_attributes
+from langchain_core.runnables import RunnableConfig
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
-users = ["James", "George", "Mike", "Sherlock"]
-user_id = users[uuid.uuid4().int % len(users)]
+session_id = f"session-{uuid.uuid4().hex[:8]}"
+user_id = f"user-{uuid.uuid4().hex[:8]}"
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -34,6 +37,10 @@ embeddings_model = OpenAIEmbeddings(
     show_progress_bar=True
 )
 
+# Initialize Langfuse
+langfuse = get_client()
+langfuse_handler = CallbackHandler()
+
 # Initialize conversation history
 conversation = []
 
@@ -41,7 +48,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="embed_documents")
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +162,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate_context")
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,27 +270,32 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
-    try:
-        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-        while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+    with langfuse.start_as_current_observation(as_type="span", name="user-query"):
+        with propagate_attributes(
+                session_id=session_id,
+                user_id=user_id,
+        ):
+            try:
+                print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
+                while True:
+                    user_input = input("User: ").strip()
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="goodbye-message"))
+                        print(f"System: {goodbye_message.content}")
+                        break
 
-            conversation.append(HumanMessage(user_input))
+                    conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    context_chain.invoke({"user_input": user_input, "conversation": conversation}, config={"callbacks": [langfuse_handler], "run_name": "context"})
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="final-response"))
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                    print(f"System: {response.content}")
+                    conversation.append(response)
 
-    except Exception as e:
-        print(f"An unexpected error occurred in the main loop: {e}")
-        sys.exit(1)
+            except Exception as e:
+                print(f"An unexpected error occurred in the main loop: {e}")
+                sys.exit(1)
 
 
 if __name__ == "__main__":
