@@ -270,18 +270,22 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
-    with langfuse.start_as_current_observation(as_type="span", name="user-query"):
-        with propagate_attributes(
-                session_id=session_id,
-                user_id=user_id,
-        ):
-            try:
-                print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-                while True:
+    try:
+        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
+        while True:
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as root_span:
+                with propagate_attributes(
+                        session_id=session_id,
+                        user_id=user_id
+                ):
                     user_input = input("User: ").strip()
                     if user_input.lower() in ["exit", "quit", "bye", "end"]:
                         goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="goodbye-message"))
                         print(f"System: {goodbye_message.content}")
+                        root_span.update(
+                            input={"user_input": user_input},
+                            output={"response": goodbye_message.content}
+                        )
                         break
 
                     conversation.append(HumanMessage(user_input))
@@ -290,12 +294,17 @@ def main():
 
                     response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation}, config=RunnableConfig(callbacks=[langfuse_handler], run_name="final-response"))
 
+                    root_span.update(
+                        input={"user_input": user_input},
+                        output={"response": response.content}
+                    )
+
                     print(f"System: {response.content}")
                     conversation.append(response)
 
-            except Exception as e:
-                print(f"An unexpected error occurred in the main loop: {e}")
-                sys.exit(1)
+    except Exception as e:
+        print(f"An unexpected error occurred in the main loop: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
