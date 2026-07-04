@@ -283,6 +283,17 @@ def main():
                             config={"run_name": "goodbye-message", "callbacks": [langfuse_handler]},
                         )
                 print(f"System: {goodbye_message.content}")
+                feedback = input("Was this conversation helpful? (Yes/No): ").strip()
+                user_comment = input("Please give us a reason for your answer. This will help us improve: ").strip()
+
+                langfuse_client.create_score(
+                    session_id=session_id,
+                    name="conversation_usefulness",
+                    value=feedback,
+                    data_type="CATEGORICAL",
+                    comment=user_comment,
+                )
+
                 langfuse_client.flush()
                 break
 
