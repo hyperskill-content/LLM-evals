@@ -10,6 +10,8 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe, get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -18,6 +20,7 @@ dotenv.load_dotenv()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -34,6 +37,7 @@ embeddings_model = OpenAIEmbeddings(
     show_progress_bar=True
 )
 
+langfuse_client = get_client()
 # Initialize conversation history
 conversation = []
 
@@ -41,7 +45,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
-
+@observe(name="embed_documents")
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -130,6 +134,7 @@ product_db = embed_documents("datasets/smartphones.json")
 # Tool Definitions
 # ---------------------------
 @tool("SmartphoneInfo")
+@observe(name="smartphone_info_tool")
 def smartphone_info_tool(model: str) -> str:
     """
     Retrieves information about a smartphone model from the product database.
@@ -155,6 +160,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate_context")
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,26 +268,45 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
+    langfuse_handler = CallbackHandler()
+
+
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+                with langfuse_client.start_as_current_observation(as_type="span", name="goodbye-message"):
+                    with propagate_attributes(session_id=session_id, user_id=user_id):
+                        goodbye_message = goodbye_chain.invoke(
+                            {"user_id": user_id},
+                            config={"run_name": "goodbye-message", "callbacks": [langfuse_handler]},
+                        )
                 print(f"System: {goodbye_message.content}")
+                langfuse_client.flush()
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            with langfuse_client.start_as_current_observation(as_type="span", name="user-query"):
+                with propagate_attributes(session_id=session_id, user_id=user_id):
+                    context_chain.invoke(
+                        {"user_input": user_input, "conversation": conversation},
+                        config={"run_name": "context", "callbacks": [langfuse_handler]},
+                    )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    response = review_chain.invoke(
+                        {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                        config={"run_name": "final-response", "callbacks": [langfuse_handler]},
+                    )
 
             print(f"System: {response.content}")
             conversation.append(response)
+            langfuse_client.flush()
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
+        langfuse_client.flush()
         sys.exit(1)
 
 
