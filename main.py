@@ -275,12 +275,13 @@ def main():
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                with langfuse.start_as_current_observation(as_type="span", name="user-query"):
+                with langfuse.start_as_current_observation(as_type="span", name="user-query", input=user_input):
                     with propagate_attributes(session_id=session_id, user_id=user_id):
                         goodbye_message = goodbye_chain.invoke(
                             {"user_id": user_id},
                             config={"run_name": "goodbye-message", "callbacks": [langfuse_handler]}
                         )
+                    langfuse.update_current_observation(output=goodbye_message.content)
                 print(f"System: {goodbye_message.content}")
 
                 feedback = input("Was this conversation helpful? (Yes/No): ")
@@ -296,7 +297,7 @@ def main():
 
             conversation.append(HumanMessage(user_input))
 
-            with langfuse.start_as_current_observation(as_type="span", name="user-query"):
+            with langfuse.start_as_current_observation(as_type="span", name="user-query", input=user_input):
                 with propagate_attributes(session_id=session_id, user_id=user_id):
                     context_chain.invoke(
                         {"user_input": user_input, "conversation": conversation},
@@ -306,6 +307,7 @@ def main():
                         {"user_id": user_id, "user_input": user_input, "conversation": conversation},
                         config={"run_name": "final-response", "callbacks": [langfuse_handler]}
                     )
+                langfuse.update_current_observation(output=response.content)
 
             print(f"System: {response.content}")
             conversation.append(response)
