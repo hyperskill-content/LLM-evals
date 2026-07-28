@@ -12,9 +12,14 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse import observe, propagate_attributes, get_client
+from langfuse.langchain import CallbackHandler
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
+
+# Create session ID
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
@@ -34,6 +39,11 @@ embeddings_model = OpenAIEmbeddings(
     show_progress_bar=True
 )
 
+# Initialize Langfuse client
+langfuse = get_client()
+# Initialize Langfuse CallbackHandler for Langchain (tracing)
+langfuse_handler = CallbackHandler()
+
 # Initialize conversation history
 conversation = []
 
@@ -42,6 +52,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe()
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -52,74 +63,79 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
         A Qdrant vector store built from the smartphone documents,
         or an empty list if an error occurs.
     """
-    try:
-        with open(json_path, "r") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: The file {json_path} was not found.")
-        return []
-    except json.JSONDecodeError as jde:
-        print(f"Error decoding JSON from file {json_path}: {jde}")
-        return []
-    except Exception as e:
-        print(f"An unexpected error occurred while reading {json_path}: {e}")
-        return []
+    with propagate_attributes(
+        trace_name="embed-documents",
+        session_id=session_id,
+        user_id=user_id,
+    ):
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            print(f"Error: The file {json_path} was not found.")
+            return []
+        except json.JSONDecodeError as jde:
+            print(f"Error decoding JSON from file {json_path}: {jde}")
+            return []
+        except Exception as e:
+            print(f"An unexpected error occurred while reading {json_path}: {e}")
+            return []
 
-    documents = []
-    for entry in data:
-        # Build a readable content string from the JSON entry
-        content = (
-            f"Model: {entry.get('model', '')}\n"
-            f"Price: {entry.get('price', '')}\n"
-            f"Rating: {entry.get('rating', '')}\n"
-            f"SIM: {entry.get('sim', '')}\n"
-            f"Processor: {entry.get('processor', '')}\n"
-            f"RAM: {entry.get('ram', '')}\n"
-            f"Battery: {entry.get('battery', '')}\n"
-            f"Display: {entry.get('display', '')}\n"
-            f"Camera: {entry.get('camera', '')}\n"
-            f"Card: {entry.get('card', '')}\n"
-            f"OS: {entry.get('os', '')}\n"
-            f"In Stock: {entry.get('in_stock', '')}"
-        )
-        documents.append(Document(page_content=content))
-
-    try:
-        collection_name = "smartphones"
-        qdrant_client = QdrantClient("http://localhost:6333")
-
-        collection_exists = qdrant_client.collection_exists(collection_name=collection_name)
-        if not collection_exists:
-            qdrant_client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=1536,
-                    distance=Distance.COSINE,
-                ),
+        documents = []
+        for entry in data:
+            # Build a readable content string from the JSON entry
+            content = (
+                f"Model: {entry.get('model', '')}\n"
+                f"Price: {entry.get('price', '')}\n"
+                f"Rating: {entry.get('rating', '')}\n"
+                f"SIM: {entry.get('sim', '')}\n"
+                f"Processor: {entry.get('processor', '')}\n"
+                f"RAM: {entry.get('ram', '')}\n"
+                f"Battery: {entry.get('battery', '')}\n"
+                f"Display: {entry.get('display', '')}\n"
+                f"Camera: {entry.get('camera', '')}\n"
+                f"Card: {entry.get('card', '')}\n"
+                f"OS: {entry.get('os', '')}\n"
+                f"In Stock: {entry.get('in_stock', '')}"
             )
+            documents.append(Document(page_content=content))
 
-            qdrant_store = QdrantVectorStore(
-                client=qdrant_client,
-                collection_name=collection_name,
-                embedding=embeddings_model
-            )
+        try:
+            collection_name = "smartphones"
+            qdrant_client = QdrantClient("http://localhost:6333")
 
-            qdrant_store.add_documents(documents=documents)
+            collection_exists = qdrant_client.collection_exists(collection_name=collection_name)
+            if not collection_exists:
+                qdrant_client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=1536,
+                        distance=Distance.COSINE,
+                    ),
+                )
 
-            return qdrant_store
+                qdrant_store = QdrantVectorStore(
+                    client=qdrant_client,
+                    collection_name=collection_name,
+                    embedding=embeddings_model
+                )
 
-        # no need to create a vector store every time
-        else:
-            qdrant_store = QdrantVectorStore.from_existing_collection(
-                embedding=embeddings_model,
-                collection_name=collection_name,
-            )
+                qdrant_store.add_documents(documents=documents)
 
-            return qdrant_store
+                return qdrant_store
 
-    except Exception as e:
-        print(f"Error initializing the vector store: {e}")
-        return []
+            # no need to create a vector store every time
+            else:
+                qdrant_store = QdrantVectorStore.from_existing_collection(
+                    embedding=embeddings_model,
+                    collection_name=collection_name,
+                )
+
+                return qdrant_store
+
+        except Exception as e:
+            print(f"Error initializing the vector store: {e}")
+            return []
 
 
 # Initialize the vector store
@@ -155,6 +171,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe()
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -166,32 +183,37 @@ def generate_context(ai_message: AIMessage) -> None:
     :returns
         None. The conversation history is updated in place.
     """
-    # construct the conversation history with the AI message containing tool calls
-    conversation.append(ai_message)
+    with propagate_attributes(
+            trace_name="generate-context",
+            session_id=session_id,
+            user_id=user_id,
+    ):
+        # construct the conversation history with the AI message containing tool calls
+        conversation.append(ai_message)
 
-    # Check if the AI message has any tool calls
-    if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
-        conversation.append(
-            AIMessage(
-                content="No tool calls found. Please ensure the model is configured to use tools."
+        # Check if the AI message has any tool calls
+        if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
+            conversation.append(
+                AIMessage(
+                    content="No tool calls found. Please ensure the model is configured to use tools."
+                )
             )
-        )
 
-    try:
-        # Process each tool call, invoke the appropriate tool, and append the result to the conversation
-        # a message with tool calls is expected to be followed by tool responses
-        for tool_call in ai_message.tool_calls:
-            if tool_call["name"] == "SmartphoneInfo":
-                tool_output = smartphone_info_tool.invoke(tool_call)
-                conversation.append(tool_output)
+        try:
+            # Process each tool call, invoke the appropriate tool, and append the result to the conversation
+            # a message with tool calls is expected to be followed by tool responses
+            for tool_call in ai_message.tool_calls:
+                if tool_call["name"] == "SmartphoneInfo":
+                    tool_output = smartphone_info_tool.invoke(tool_call)
+                    conversation.append(tool_output)
 
-    except Exception as e:
-        print(f"An error occurred while processing tool calls: {e}")
-        conversation.append(
-            AIMessage(
-                content=f"An error occurred while processing tool calls: {e}"
+        except Exception as e:
+            print(f"An error occurred while processing tool calls: {e}")
+            conversation.append(
+                AIMessage(
+                    content=f"An error occurred while processing tool calls: {e}"
+                )
             )
-        )
 
 
 # ---------------------------
@@ -265,21 +287,41 @@ def main():
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                with propagate_attributes(
+                        session_id=session_id,
+                        user_id=user_id
+                ):
+                    user_input = input("User: ").strip()
 
-            conversation.append(HumanMessage(user_input))
+                    # langfuse v4 deprecated trace-level input and output. we have to set it manually
+                    span.update(input={"user_input": user_input})
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config={
+                            "run_name": "goodbye-message",
+                            "callbacks": [langfuse_handler],
+                        })
+                        span.update(output={"response": goodbye_message.content})
+                        print(f"System: {goodbye_message.content}")
+                        break
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    conversation.append(HumanMessage(user_input))
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                    context_chain.invoke({"user_input": user_input, "conversation": conversation}, config={
+                        "run_name": "context",
+                        "callbacks": [langfuse_handler],
+                    })
 
+                    response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation}, config={
+                        "run_name": "final-response",
+                        "callbacks": [langfuse_handler],
+                    })
+
+                    span.update(output={"response": response.content})
+
+                    print(f"System: {response.content}")
+                    conversation.append(response)
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
         sys.exit(1)
