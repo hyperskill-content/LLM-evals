@@ -65,7 +65,6 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     with propagate_attributes(
         trace_name="embed-documents",
-        session_id=session_id,
         user_id=user_id,
     ):
         try:
@@ -183,37 +182,33 @@ def generate_context(ai_message: AIMessage) -> None:
     :returns
         None. The conversation history is updated in place.
     """
-    with propagate_attributes(
-            trace_name="generate-context",
-            session_id=session_id,
-            user_id=user_id,
-    ):
-        # construct the conversation history with the AI message containing tool calls
-        conversation.append(ai_message)
+    # construct the conversation history with the AI message containing tool calls
+    conversation.append(ai_message)
 
-        # Check if the AI message has any tool calls
-        if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
-            conversation.append(
-                AIMessage(
-                    content="No tool calls found. Please ensure the model is configured to use tools."
-                )
+    # Check if the AI message has any tool calls
+    if not hasattr(ai_message, "tool_calls") or not ai_message.tool_calls:
+        conversation.append(
+            AIMessage(
+                content="No tool calls found. Please ensure the model is configured to use tools."
             )
+        )
+        return
 
-        try:
-            # Process each tool call, invoke the appropriate tool, and append the result to the conversation
-            # a message with tool calls is expected to be followed by tool responses
-            for tool_call in ai_message.tool_calls:
-                if tool_call["name"] == "SmartphoneInfo":
-                    tool_output = smartphone_info_tool.invoke(tool_call)
-                    conversation.append(tool_output)
+    try:
+        # Process each tool call, invoke the appropriate tool, and append the result to the conversation
+        # a message with tool calls is expected to be followed by tool responses
+        for tool_call in ai_message.tool_calls:
+            if tool_call["name"] == "SmartphoneInfo":
+                tool_output = smartphone_info_tool.invoke(tool_call)
+                conversation.append(tool_output)
 
-        except Exception as e:
-            print(f"An error occurred while processing tool calls: {e}")
-            conversation.append(
-                AIMessage(
-                    content=f"An error occurred while processing tool calls: {e}"
-                )
+    except Exception as e:
+        print(f"An error occurred while processing tool calls: {e}")
+        conversation.append(
+            AIMessage(
+                content=f"An error occurred while processing tool calls: {e}"
             )
+        )
 
 
 # ---------------------------
@@ -287,15 +282,15 @@ def main():
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
+            user_input = input("User: ").strip()
+
             with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
                 with propagate_attributes(
                         session_id=session_id,
                         user_id=user_id
                 ):
-                    user_input = input("User: ").strip()
-
                     # langfuse v4 deprecated trace-level input and output. we have to set it manually
-                    span.update(input={"user_input": user_input})
+                    span.update(input=user_input)
 
                     if user_input.lower() in ["exit", "quit", "bye", "end"]:
                         goodbye_message = goodbye_chain.invoke({"user_id": user_id}, config={
