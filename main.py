@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import dotenv
 from langchain_community.docstore.document import Document
@@ -14,7 +15,11 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 # Load environment variables from .env file
-dotenv.load_dotenv()
+env_path = Path(".env")
+if not env_path.exists():
+    env_path = Path("~/env/llm-evals/.env").expanduser()
+
+dotenv.load_dotenv(env_path)
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
