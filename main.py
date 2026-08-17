@@ -291,6 +291,27 @@ def main():
                         )
                         query_span.update(output={"response": goodbye_message.content})
                         print(f"System: {goodbye_message.content}")
+
+                        feedback = input(
+                            "Was this conversation helpful? (Yes/No): "
+                        ).strip()
+                        while feedback.lower() not in ["yes", "no"]:
+                            feedback = input(
+                                "Please enter Yes or No: "
+                            ).strip()
+
+                        user_comment = input(
+                            "Please give us a reason for your answer. "
+                            "This will help us improve: "
+                        ).strip()
+
+                        langfuse.create_score(
+                            session_id=session_id,
+                            name="conversation_usefulness",
+                            value=feedback.capitalize(),
+                            data_type="CATEGORICAL",
+                            comment=user_comment,
+                        )
                         break
 
                     conversation.append(HumanMessage(user_input))
