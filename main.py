@@ -50,6 +50,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed_documents")
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -279,7 +280,9 @@ def main():
         while True:
             user_input = input("User: ").strip()
 
-            with langfuse.start_as_current_observation(as_type="span", name="user-query"):
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                span.update(input=user_input)
+
                 with propagate_attributes(
                     session_id=session_id,
                     user_id=user_id,
@@ -292,6 +295,7 @@ def main():
                                 "callbacks": [langfuse_handler],
                             },
                         )
+                        span.update(output=goodbye_message.content)
                         print(f"System: {goodbye_message.content}")
                         break
 
@@ -317,30 +321,9 @@ def main():
                         },
                     )
 
+                    span.update(output=response.content)
                     print(f"System: {response.content}")
                     conversation.append(response)
-
-    except Exception as e:
-        print(f"An unexpected error occurred in the main loop: {e}")
-        sys.exit(1)
-
-    try:
-        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
-        while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
-
-            conversation.append(HumanMessage(user_input))
-
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
-
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
-
-            print(f"System: {response.content}")
-            conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
