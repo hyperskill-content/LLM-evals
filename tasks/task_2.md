@@ -101,6 +101,8 @@ def hello():
       print("Hello, world!")
 ```
 
+Note that `trace_name` renames the entire trace, not just the observation of the function it's called in, so only set it from the function that's actually the root of the trace, like `hello()` above. If a function running as a child observation inside an already-started trace sets it, the whole trace gets renamed too. To name an individual observation, pass `name=` to `@observe()` instead.
+
 Refer to the [documentation](https://langfuse.com/docs/get-started) for more details on monitoring LangChain applications.
 
 ### Development Steps
@@ -125,9 +127,9 @@ The same `session_id` and `user_id` should be used for all traces within that co
 
 Here's what you need to do:
 
-- Use the `@observe()` decorator to monitor the data loader/vector store (`embed_documents()`) and tool calls (`generate_context()`) functions. These will create their own observations.
+- Decorate both `embed_documents()` and `generate_context()` with `@observe(name="...")`, since both need their own observation, and passing an explicit name instead of relying on Langfuse's default of the function name keeps them clearly labeled in the UI.
 - Generate a unique `session_id` and `user_id` once at the start of the application (before the conversation loop begins), as shown in the example above.
-- Initialize the Langfuse client using `get_client()` and create a single `CallbackHandler` instance before the conversation loop that will be reused for all LangChain invocations.
+- Initialize the Langfuse client using `get_client()` and create a single `CallbackHandler` instance inside `main()`, after the chains (and `embed_documents()`) are defined and before the conversation loop begins, so it's reused for all LangChain invocations. Don't create these at module level: initializing them that early leaves the handler alive during the `embed_documents()` startup trace, which can leave it associated with the wrong span context for the chain calls inside the loop.
 - For each iteration of the conversation loop (each user query):
   - Create a parent span using `langfuse.start_as_current_observation(as_type="span", name="user-query")` to create a single trace for that query
   - Within the parent span, use the `propagate_attributes()` context manager to set `session_id` and `user_id` for that trace and all child observations
@@ -135,7 +137,12 @@ Here's what you need to do:
     - Context chain — use run name `context`
     - Final response chain — use run name `final-response`
     - Goodbye message chain (when user exits) — use run name `goodbye-message`
+  - Set the span's `input` and `output` as you go, not both at the end of the iteration:
+    - Call `span.update(input=user_input)` right after you enter the span, before invoking any chains. If a chain raises partway through the iteration, the trace still records what the user asked, since `span.update(input=..., output=...)` at the bottom of the loop body would lose both if an exception fires before it's reached.
+    - Call `span.update(output=response.content)` once the final response comes back, as its own call.
+    - Pass the plain string, not a dict, e.g. `span.update(input=user_input)` rather than `span.update(input={"user_input": user_input})`. Stage 5's Ragas evaluator reads the trace's input/output and calls `str()` on them, so a dict shows up as noisy text like `"{'user_input': 'compare f13...'}"` instead of the clean query string, which is worse input for the evaluator and harder to read in the UI.
 - Each user query will create its own trace with all LangChain invocations as child observations, and all traces from the same conversation will share the same `session_id` for easy grouping in the Langfuse UI.
+- Langfuse sends traces in the background, so a short-lived script like this one can exit before they're delivered. Add a `finally` block around the existing `try`/`except` in `main()` that calls `langfuse.flush()`, so pending traces are sent before the process ends.
 - Keep the given code mostly the same and make only the necessary additions for the above requirements.
 
 Here are some examples of what you would see in the Langfuse UI:

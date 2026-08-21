@@ -11,7 +11,7 @@
 
 ### Description
 
-So far, we have utilized "human-as-a-judge" evaluations from user feedback and manual annotation to determine how the app performs. Unfortunately, manually annotating large datasets is time-consuming and costly. Additionally, users may not always provide feedback. Model-based evaluations come to the rescue, providing a way to use LLMs as judges to run automated evaluations on our datasets. This is also known as LLM-as-a-judge evaluation.
+So far, we have utilized "human-as-a-judge" evaluations from user feedback and manual annotation to determine how the app performs. Unfortunately, manually annotating large datasets is time-consuming and costly. Additionally, users may not always provide feedback. Model-based evaluations address this by using LLMs as judges to run automated evaluations on datasets. This is also known as LLM-as-a-judge evaluation.
 
 ### Useful Notes
 
@@ -30,7 +30,7 @@ Furthermore, as systems evolve into more complex agentic systems that can utiliz
 
 ### Development Steps
 
-There are various approaches you can take to perform model-based evaluations. First, Langfuse allows you to run them directly on your datasets and traces from the UI. But first, make sure you’re running the latest version of Langfuse. You can ensure that by running the following command from the Langfuse folder to update your local installation:
+Start by exploring the built-in UI evaluators to see how Langfuse handles LLM-as-a-judge out of the box. First, make sure you’re running the latest version of Langfuse:
 
 ```bash
 docker compose up --pull always
@@ -48,16 +48,31 @@ When you click `Execute`, and wait for a bit, you should now see the scores and 
 
 ![Eval scores](../assets/images/eval_scores.png)
 
-You can add and experiment with as many evaluators as you want. If you'd like to learn more about using Langfuse with Ragas to run a custom evaluation pipeline, check out [this cookbook](https://langfuse.com/guides/cookbook/evaluation_of_rag_with_ragas). This will help you gain an in-depth understanding of what is happening under the hood and run evals not built into Langfuse.
+You can add and experiment with as many evaluators as you want.
+
+If the UI covers your needs, you can stop here. Consider an external evaluation pipeline when you need more control over when traces get evaluated (e.g. scheduled runs or webhook triggers), flexibility beyond what the UI supports, version-controlled evaluation logic, or the ability to use existing evaluation frameworks like Ragas.
+
+**Code-based evaluation**
+
+The UI evaluators are limited to what Langfuse ships. For custom metrics, Langfuse exposes `run_batched_evaluation` in the SDK — it fetches all traces in the project, passes each one through a mapper function you define, calls your async evaluator functions, and pushes the scores back automatically.
+
+There are three things to implement:
+
+- A `trace_mapper` that extracts the fields you want to evaluate from each trace (e.g. `input`, `output`) and wraps them in `EvaluatorInputs`
+- One or more async evaluator functions that receive those fields and return an `Evaluation` with a name and a numeric score
+- A call to `run_batched_evaluation` wiring them together
+
+Use [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/) for the metrics and the [Langfuse + Ragas cookbook](https://langfuse.com/guides/cookbook/evaluation_of_rag_with_ragas) as a reference. When you implement faithfulness, pay attention to what `retrieved_contexts` should contain and whether what's available at the trace level is sufficient for the metric to be meaningful.
 
 ### Deliverables
 
-There are no code deliverables for this task. But you should now be able to run various model-based evaluations from the Langfuse UI. As an extra challenge, you should also be able to run custom evaluations and push scores to Langfuse.
+Implement `eval.py` with a `run_batched_evaluation` pipeline using at least two Ragas metrics and submit it as part of your PR. Scores from the run should be visible in Langfuse under the evaluated traces.
 
 ### **Useful Resources**
 
 ### **Docs**
 
 - [LLM-as-a-judge evaluation](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge)
+- [Scores via SDK](https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk)
 - [Ragas Metrics](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/)
 - [Custom evals with Ragas](https://langfuse.com/guides/cookbook/evaluation_of_rag_with_ragas)
