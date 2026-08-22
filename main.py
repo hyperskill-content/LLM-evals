@@ -10,14 +10,22 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe, get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
+# Set session and user_ids
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+
+# Initialize Langfuse for monitoring and tracing
+langfuse = get_client()
+langfuse_handler = CallbackHandler()
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -42,6 +50,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe()
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +164,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe()
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -266,19 +276,42 @@ def main():
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
 
-            conversation.append(HumanMessage(user_input))
+            # Use a parent span to create a single trace for the query.
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                with propagate_attributes(user_id=user_id, session_id=session_id):
+                    # Update the parent span with the user input.
+                    span.update(input=user_input)
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke(
+                            {"user_id": user_id},
+                            config={"run_name": "goodbye-message", "callbacks": [langfuse_handler]},
+                            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                        # Update the parent span to catch the output in this termination branch.
+                        span.update(output=goodbye_message.content)
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                        print(f"System: {goodbye_message.content}")
+                        break
+
+                    conversation.append(HumanMessage(user_input))
+
+                    context_chain.invoke(
+                        {"user_input": user_input, "conversation": conversation},
+                        config={"run_name": "context", "callbacks": [langfuse_handler]}
+                        )
+
+                    response = review_chain.invoke(
+                        {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                        config={"run_name": "final-response", "callbacks": [langfuse_handler]},
+                        )
+
+                    # Update the parent span with response output in the main loop.
+                    span.update(output=response.content)
+
+                    print(f"System: {response.content}")
+                    conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
