@@ -39,7 +39,7 @@ embeddings_model = OpenAIEmbeddings(
     model=os.getenv("OPENAI_EMBEDDINGS_MODEL"),
     base_url=os.getenv("OPENAI_BASE_URL"),
     api_key=os.getenv("OPENAI_API_KEY"),
-    show_progress_bar=False
+    show_progress_bar=True
 )
 
 # Initialize conversation history
