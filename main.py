@@ -6,7 +6,11 @@ import uuid
 import dotenv
 from langchain_community.docstore.document import Document
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import (
+    MessagesPlaceholder,
+    ChatPromptTemplate,
+    PromptTemplate,
+)
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
@@ -23,7 +27,7 @@ user_id = users[uuid.uuid4().int % len(users)]
 llm = ChatOpenAI(
     model=os.getenv("OPENAI_MODEL"),
     base_url=os.getenv("OPENAI_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY")
+    api_key=os.getenv("OPENAI_API_KEY"),
 )
 
 # Initialize the embeddings model with OpenAI API credentials
@@ -31,7 +35,7 @@ embeddings_model = OpenAIEmbeddings(
     model=os.getenv("OPENAI_EMBEDDINGS_MODEL"),
     base_url=os.getenv("OPENAI_BASE_URL"),
     api_key=os.getenv("OPENAI_API_KEY"),
-    show_progress_bar=True
+    show_progress_bar=False,
 )
 
 # Initialize conversation history
@@ -41,6 +45,7 @@ conversation = []
 # ---------------------------
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
+
 
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
@@ -88,7 +93,9 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
         collection_name = "smartphones"
         qdrant_client = QdrantClient("http://localhost:6333")
 
-        collection_exists = qdrant_client.collection_exists(collection_name=collection_name)
+        collection_exists = qdrant_client.collection_exists(
+            collection_name=collection_name
+        )
         if not collection_exists:
             qdrant_client.create_collection(
                 collection_name=collection_name,
@@ -101,7 +108,7 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
             qdrant_store = QdrantVectorStore(
                 client=qdrant_client,
                 collection_name=collection_name,
-                embedding=embeddings_model
+                embedding=embeddings_model,
             )
 
             qdrant_store.add_documents(documents=documents)
@@ -188,9 +195,7 @@ def generate_context(ai_message: AIMessage) -> None:
     except Exception as e:
         print(f"An error occurred while processing tool calls: {e}")
         conversation.append(
-            AIMessage(
-                content=f"An error occurred while processing tool calls: {e}"
-            )
+            AIMessage(content=f"An error occurred while processing tool calls: {e}")
         )
 
 
@@ -242,20 +247,18 @@ def main():
     context_prompt = ChatPromptTemplate.from_messages(
         [
             (SystemMessage(context_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
+            MessagesPlaceholder(variable_name="conversation"),
         ]
     )
 
     review_prompt = ChatPromptTemplate.from_messages(
         [
             (SystemMessage(review_system_prompt)),
-            MessagesPlaceholder(variable_name="conversation")
+            MessagesPlaceholder(variable_name="conversation"),
         ]
     )
 
-    goodbye_prompt = PromptTemplate.from_template(
-        goodbye_system_prompt
-    )
+    goodbye_prompt = PromptTemplate.from_template(goodbye_system_prompt)
 
     context_chain = context_prompt | llm_with_tools | generate_context
     review_chain = review_prompt | llm
@@ -263,7 +266,9 @@ def main():
     goodbye_chain = goodbye_prompt | llm
 
     try:
-        print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
+        print(
+            "Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons."
+        )
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
@@ -273,9 +278,17 @@ def main():
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+            context_chain.invoke(
+                {"user_input": user_input, "conversation": conversation}
+            )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+            response = review_chain.invoke(
+                {
+                    "user_id": user_id,
+                    "user_input": user_input,
+                    "conversation": conversation,
+                }
+            )
 
             print(f"System: {response.content}")
             conversation.append(response)
