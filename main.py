@@ -14,6 +14,8 @@ from langchain_core.prompts import (
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import get_client, observe, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -22,6 +24,13 @@ dotenv.load_dotenv()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+
+# One session per conversation; each user query becomes its own trace within it
+session_id = f"session-{uuid.uuid4().hex[:8]}"
+
+# Langfuse client, plus a single callback handler reused for every LangChain call
+langfuse = get_client()
+langfuse_handler = CallbackHandler()
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -47,6 +56,7 @@ conversation = []
 # ---------------------------
 
 
+@observe()
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -162,6 +172,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe()
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -272,23 +283,58 @@ def main():
         while True:
             user_input = input("User: ").strip()
             if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
+                with langfuse.start_as_current_observation(
+                    as_type="span", name="user-query", input=user_input
+                ) as root_span:
+                    with propagate_attributes(
+                        session_id=session_id,
+                        user_id=user_id,
+                    ):
+                        goodbye_message = goodbye_chain.invoke(
+                            {"user_id": user_id},
+                            config={
+                                "run_name": "goodbye-message",
+                                "callbacks": [langfuse_handler],
+                            },
+                        )
+
+                    root_span.update(output=goodbye_message.content)
+
                 print(f"System: {goodbye_message.content}")
                 break
 
             conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke(
-                {"user_input": user_input, "conversation": conversation}
-            )
+            # One trace per user query. The parent span makes both chain
+            # invocations children of the same trace instead of separate ones.
+            with langfuse.start_as_current_observation(
+                as_type="span", name="user-query", input=user_input
+            ) as root_span:
+                with propagate_attributes(
+                    session_id=session_id,
+                    user_id=user_id,
+                ):
+                    context_chain.invoke(
+                        {"user_input": user_input, "conversation": conversation},
+                        config={
+                            "run_name": "context",
+                            "callbacks": [langfuse_handler],
+                        },
+                    )
 
-            response = review_chain.invoke(
-                {
-                    "user_id": user_id,
-                    "user_input": user_input,
-                    "conversation": conversation,
-                }
-            )
+                    response = review_chain.invoke(
+                        {
+                            "user_id": user_id,
+                            "user_input": user_input,
+                            "conversation": conversation,
+                        },
+                        config={
+                            "run_name": "final-response",
+                            "callbacks": [langfuse_handler],
+                        },
+                    )
+
+                root_span.update(output=response.content)
 
             print(f"System: {response.content}")
             conversation.append(response)
