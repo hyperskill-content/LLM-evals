@@ -293,6 +293,21 @@ def main():
                         )
                         print(f"System: {goodbye_message.content}")
                         span.update(output=goodbye_message.content)
+
+                        # Collect feedback about the whole conversation
+                        # .strip() removes spaces; .capitalize() turns "yes"/"YES" into "Yes",
+                        # so the categorical score always has the same two values
+                        feedback = input("Was this conversation helpful? (Yes/No): ").strip().capitalize()
+                        user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                        # Score attached to the session (all traces from this run), not to one trace
+                        langfuse.create_score(
+                            session_id=session_id,
+                            name="conversation_usefulness",
+                            value=feedback,
+                            data_type="CATEGORICAL",
+                            comment=user_comment,
+                        )
                         break
 
                     conversation.append(HumanMessage(user_input))
