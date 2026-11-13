@@ -3,17 +3,18 @@ name = "llm-evals"
 version = "0.1.0"
 description = "A smartphone recommendation system using LangChain and Qdrant"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "langchain-core",
     "langchain-openai",
     "python-dotenv",
     "langchain-community",
-    "langfuse",
+    "langfuse>=5",
     "qdrant-client",
     "langchain-qdrant",
     "requests",
     "langchain",
+    "ragas>=0.4.3",
 ]
 
 [dependency-groups]
