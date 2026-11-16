@@ -93,6 +93,17 @@ source .venv/bin/activate  # On macOS/Linux
 python main.py
 ```
 
+### Running the Evaluation
+
+`eval.py` runs model-based (LLM-as-a-judge) evaluation on the traces the app sends to Langfuse. It scores the most recent user queries with Ragas faithfulness and answer relevancy, and pushes the scores back to Langfuse:
+
+```bash
+uv run python eval.py                  # evaluate the 20 most recent queries
+uv run python eval.py --max-items 100
+```
+
+It uses the same `OPENAI_*` and `LANGFUSE_*` variables as the app. Each run scores the selected queries again, so re-running over the same traces adds a second set of scores.
+
 ### Adding New Dependencies
 
 To add new packages to the project:
@@ -161,6 +172,7 @@ Here are the main directories and files in this repo:
   │   └── task_5.md
   ├── .env.sample
   ├── .gitignore
+  ├── eval.py
   ├── main.py
   ├── pyproject.toml
   ├── README.md
