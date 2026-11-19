@@ -12,12 +12,19 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+# Langfuse: observe = decorator that records a function call; get_client = returns the Langfuse client;
+# propagate_attributes = context manager that copies session_id/user_id onto every observation inside it
+from langfuse import observe, get_client, propagate_attributes
+# CallbackHandler = LangChain callback that sends each chain/LLM run to Langfuse
+from langfuse.langchain import CallbackHandler
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+# One session ID per run of the app; every query trace in this run gets it, so Langfuse groups them
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -42,6 +49,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed-documents")  # records this startup call as its own trace in Langfuse
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +163,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate-context")  # records each tool-handling step inside the query's trace
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,27 +271,67 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
+    # Created here (after embed_documents ran, before the loop) so one handler is reused for every chain call
+    langfuse = get_client()
+    langfuse_handler = CallbackHandler()
+
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
 
-            conversation.append(HumanMessage(user_input))
+            # Parent span: everything inside this block becomes one trace for this query
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                span.update(input=user_input)  # set first, so the trace keeps the question even if a chain fails
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                # Copies session_id and user_id onto this trace and every observation inside it
+                with propagate_attributes(session_id=session_id, user_id=user_id):
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke(
+                            {"user_id": user_id},
+                            config={"run_name": "goodbye-message", "callbacks": [langfuse_handler]},
+                        )
+                        print(f"System: {goodbye_message.content}")
+                        span.update(output=goodbye_message.content)
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                        # Collect feedback about the whole conversation
+                        # .strip() removes spaces; .capitalize() turns "yes"/"YES" into "Yes",
+                        # so the categorical score always has the same two values
+                        feedback = input("Was this conversation helpful? (Yes/No): ").strip().capitalize()
+                        user_comment = input("Please give us a reason for your answer. This will help us improve: ")
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                        # Score attached to the session (all traces from this run), not to one trace
+                        langfuse.create_score(
+                            session_id=session_id,
+                            name="conversation_usefulness",
+                            value=feedback,
+                            data_type="CATEGORICAL",
+                            comment=user_comment,
+                        )
+                        break
+
+                    conversation.append(HumanMessage(user_input))
+
+                    context_chain.invoke(
+                        {"user_input": user_input, "conversation": conversation},
+                        config={"run_name": "context", "callbacks": [langfuse_handler]},
+                    )
+
+                    response = review_chain.invoke(
+                        {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                        config={"run_name": "final-response", "callbacks": [langfuse_handler]},
+                    )
+
+                    print(f"System: {response.content}")
+                    span.update(output=response.content)  # plain string, not a dict
+                    conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
         sys.exit(1)
+    finally:
+        # Traces are sent in the background; this sends any still waiting before the program ends
+        langfuse.flush()
 
 
 if __name__ == "__main__":
