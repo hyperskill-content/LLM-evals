@@ -6,7 +6,7 @@ import uuid
 
 import dotenv
 from langchain_community.docstore.document import Document
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, PromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -375,6 +375,20 @@ def main():
                         )
 
                         span.update(output=response.content)
+                        retrieved_contexts = [
+                            message.content
+                            for message in conversation[conversation_length:]
+                            if isinstance(message, ToolMessage)
+                            and isinstance(message.content, str)
+                            and message.content.strip()
+                        ]
+                        if retrieved_contexts:
+                            span.update(
+                                metadata={
+                                    "retrieved_contexts": retrieved_contexts,
+                                    "evaluation_ready": "ready",
+                                }
+                            )
                         print(f"System: {response.content}")
                         conversation.append(response)
                     except Exception as e:
