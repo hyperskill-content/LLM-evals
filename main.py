@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import sys
@@ -10,6 +11,8 @@ from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate, Prom
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langfuse import get_client, observe, propagate_attributes
+from langfuse.langchain import CallbackHandler
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
@@ -18,6 +21,7 @@ dotenv.load_dotenv()
 
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 
 # Initialize the LLM with OpenAI API credentials (substitute for other models)
 llm = ChatOpenAI(
@@ -42,7 +46,8 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
-def embed_documents(json_path: str) -> QdrantVectorStore | list:
+@observe(name="embed_documents")
+def embed_documents(json_path: str) -> QdrantVectorStore | list[Document]:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
     :param
@@ -86,7 +91,13 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
 
     try:
         collection_name = "smartphones"
-        qdrant_client = QdrantClient("http://localhost:6333")
+        qdrant_url = os.getenv("QDRANT_URL")
+        if qdrant_url:
+            qdrant_client = QdrantClient(url=qdrant_url)
+        else:
+            qdrant_path = os.getenv("QDRANT_PATH", "qdrant_storage")
+            qdrant_client = QdrantClient(path=qdrant_path)
+        atexit.register(qdrant_client.close)
 
         collection_exists = qdrant_client.collection_exists(collection_name=collection_name)
         if not collection_exists:
@@ -98,28 +109,19 @@ def embed_documents(json_path: str) -> QdrantVectorStore | list:
                 ),
             )
 
-            qdrant_store = QdrantVectorStore(
-                client=qdrant_client,
-                collection_name=collection_name,
-                embedding=embeddings_model
-            )
-
+        qdrant_store = QdrantVectorStore(
+            client=qdrant_client,
+            collection_name=collection_name,
+            embedding=embeddings_model
+        )
+        if qdrant_client.count(collection_name=collection_name).count == 0:
             qdrant_store.add_documents(documents=documents)
-
-            return qdrant_store
-
-        # no need to create a vector store every time
-        else:
-            qdrant_store = QdrantVectorStore.from_existing_collection(
-                embedding=embeddings_model,
-                collection_name=collection_name,
-            )
-
-            return qdrant_store
+        return qdrant_store
 
     except Exception as e:
         print(f"Error initializing the vector store: {e}")
-        return []
+        print("Using the in-memory smartphone catalog without Qdrant.")
+        return documents
 
 
 # Initialize the vector store
@@ -142,6 +144,23 @@ def smartphone_info_tool(model: str) -> str:
              or an error message if not found or if an error occurs.
     """
     try:
+        if isinstance(product_db, list):
+            model_name = model.lower()
+            meaningful_terms = [
+                term for term in model_name.replace("-", " ").split()
+                if term not in {"samsung", "galaxy", "apple", "iphone"}
+            ]
+            exact_matches = [
+                document for document in product_db
+                if meaningful_terms and all(
+                    term in document.page_content.lower()
+                    for term in meaningful_terms
+                )
+            ]
+            if exact_matches:
+                return exact_matches[0].page_content
+            return "Could not find information for the specified model."
+
         results = product_db.similarity_search(model, k=1)
         if not results:
             print(f"Info: No results found for model: {model}")
@@ -155,6 +174,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generate_context")
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,27 +282,78 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
+    langfuse = get_client()
+    langfuse_handler = CallbackHandler()
+
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
             user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+            with langfuse.start_as_current_observation(
+                as_type="span",
+                name="user-query",
+            ) as span:
+                span.update(input=user_input)
+                with propagate_attributes(
+                    session_id=session_id,
+                    user_id=user_id,
+                ):
+                    conversation_length = len(conversation)
+                    try:
+                        if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                            goodbye_message = goodbye_chain.invoke(
+                                {"user_id": user_id},
+                                config={
+                                    "run_name": "goodbye-message",
+                                    "callbacks": [langfuse_handler],
+                                },
+                            )
+                            span.update(output=goodbye_message.content)
+                            print(f"System: {goodbye_message.content}")
+                            break
 
-            conversation.append(HumanMessage(user_input))
+                        conversation.append(HumanMessage(user_input))
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                        context_chain.invoke(
+                            {"user_input": user_input, "conversation": conversation},
+                            config={
+                                "run_name": "context",
+                                "callbacks": [langfuse_handler],
+                            },
+                        )
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                        response = review_chain.invoke(
+                            {
+                                "user_id": user_id,
+                                "user_input": user_input,
+                                "conversation": conversation,
+                            },
+                            config={
+                                "run_name": "final-response",
+                                "callbacks": [langfuse_handler],
+                            },
+                        )
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                        span.update(output=response.content)
+                        print(f"System: {response.content}")
+                        conversation.append(response)
+                    except Exception as e:
+                        del conversation[conversation_length:]
+                        error_message = f"{type(e).__name__}: {e}"
+                        span.update(
+                            output=f"Request failed: {error_message}",
+                            level="ERROR",
+                            status_message=error_message,
+                        )
+                        print("System: Sorry, that request failed. Please try again.")
 
+    except EOFError:
+        print("No interactive input received.")
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
         sys.exit(1)
+    finally:
+        langfuse.flush()
 
 
 if __name__ == "__main__":
