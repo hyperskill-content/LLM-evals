@@ -301,15 +301,55 @@ def main():
                     conversation_length = len(conversation)
                     try:
                         if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                            goodbye_message = goodbye_chain.invoke(
-                                {"user_id": user_id},
-                                config={
-                                    "run_name": "goodbye-message",
-                                    "callbacks": [langfuse_handler],
-                                },
-                            )
-                            span.update(output=goodbye_message.content)
-                            print(f"System: {goodbye_message.content}")
+                            try:
+                                goodbye_message = goodbye_chain.invoke(
+                                    {"user_id": user_id},
+                                    config={
+                                        "run_name": "goodbye-message",
+                                        "callbacks": [langfuse_handler],
+                                    },
+                                )
+                                span.update(output=goodbye_message.content)
+                                print(f"System: {goodbye_message.content}")
+                            except Exception as e:
+                                error_message = f"{type(e).__name__}: {e}"
+                                span.update(
+                                    output=f"Goodbye request failed: {error_message}",
+                                    level="ERROR",
+                                    status_message=error_message,
+                                )
+                                print("System: The goodbye message could not be generated.")
+
+                            while True:
+                                feedback = input(
+                                    "Was this conversation helpful? (Yes/No): "
+                                ).strip().lower()
+                                if feedback in {"yes", "no"}:
+                                    feedback = feedback.capitalize()
+                                    break
+                                print("Please answer Yes or No.")
+
+                            while True:
+                                user_comment = input(
+                                    "Please give us a reason for your answer: "
+                                ).strip()
+                                if user_comment:
+                                    break
+                                print("Please enter a short comment.")
+                            try:
+                                langfuse.create_score(
+                                    session_id=session_id,
+                                    name="conversation_usefulness",
+                                    value=feedback,
+                                    data_type="CATEGORICAL",
+                                    comment=user_comment,
+                                )
+                                print("System: Thanks for your feedback.")
+                            except Exception as e:
+                                print(
+                                    "System: Could not save your feedback to Langfuse: "
+                                    f"{type(e).__name__}: {e}"
+                                )
                             break
 
                         conversation.append(HumanMessage(user_input))
