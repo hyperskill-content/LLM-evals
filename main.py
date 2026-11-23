@@ -283,6 +283,18 @@ def main():
                             config={"run_name": "goodbye", "callbacks": [langfuse_handler]}
                         )
                         print(f"System: {goodbye_message.content}")
+                        # Collect feedback about the entire conversation
+                        feedback = input("Was this conversation helpful? (Yes/No): ")
+                        user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+
+                        # Score at the session level (not individual trace)
+                        langfuse.create_score(
+                            session_id=session_id,  # Use the session_id from the start of the conversation
+                            name="conversation_usefulness",
+                            value=feedback,
+                            data_type="CATEGORICAL",
+                            comment=user_comment
+                        )
                         break
 
                     conversation.append(HumanMessage(user_input))
@@ -296,7 +308,7 @@ def main():
                         {"user_id": user_id, "user_input": user_input, "conversation": conversation},
                         config={"run_name": "final-response", "callbacks": [langfuse_handler]}
                     )
-                    span.update(output=response)
+                    span.update(output=response.content)
                     print(f"System: {response.content}")
                     conversation.append(response)
 
