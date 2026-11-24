@@ -12,10 +12,13 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
+from langfuse import observe, get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
 
+session_id = f"session-{uuid.uuid4().hex[:8]}"
 users = ["James", "George", "Mike", "Sherlock"]
 user_id = users[uuid.uuid4().int % len(users)]
 
@@ -42,6 +45,7 @@ conversation = []
 # Load JSON Data and Build Qdrant Vector Store
 # ---------------------------
 
+@observe(name="embed documents")
 def embed_documents(json_path: str) -> QdrantVectorStore | list:
     """
     Load JSON data from the smartphones.json file and convert each entry to a Document.
@@ -155,6 +159,7 @@ def smartphone_info_tool(model: str) -> str:
 # ---------------------------
 # Tool Call Handling and Response Generation
 # ---------------------------
+@observe(name="generation")
 def generate_context(ai_message: AIMessage) -> None:
     """
     Process tool calls from the language model and append the AI message and
@@ -262,28 +267,56 @@ def main():
 
     goodbye_chain = goodbye_prompt | llm
 
+    langfuse = get_client()
+    langfuse_handler = CallbackHandler()
+
     try:
         print("Welcome to the Smartphone Assistant! I can help you with smartphone features and comparisons.")
         while True:
-            user_input = input("User: ").strip()
-            if user_input.lower() in ["exit", "quit", "bye", "end"]:
-                goodbye_message = goodbye_chain.invoke({"user_id": user_id})
-                print(f"System: {goodbye_message.content}")
-                break
+            with langfuse.start_as_current_observation(as_type="span", name="user-query") as span:
+                with propagate_attributes(user_id=user_id, session_id=session_id):
+                    user_input = input("User: ").strip()
+                    span.update(input=user_input)
+                    if user_input.lower() in ["exit", "quit", "bye", "end"]:
+                        goodbye_message = goodbye_chain.invoke(
+                            {"user_id": user_id},
+                            config={"run_name": "goodbye", "callbacks": [langfuse_handler]}
+                        )
+                        print(f"System: {goodbye_message.content}")
+                        # Collect feedback about the entire conversation
+                        feedback = input("Was this conversation helpful? (Yes/No): ")
+                        user_comment = input("Please give us a reason for your answer. This will help us improve: ")
 
-            conversation.append(HumanMessage(user_input))
+                        # Score at the session level (not individual trace)
+                        langfuse.create_score(
+                            session_id=session_id,  # Use the session_id from the start of the conversation
+                            name="conversation_usefulness",
+                            value=feedback,
+                            data_type="CATEGORICAL",
+                            comment=user_comment
+                        )
+                        break
 
-            context_chain.invoke({"user_input": user_input, "conversation": conversation})
+                    conversation.append(HumanMessage(user_input))
 
-            response = review_chain.invoke({"user_id": user_id, "user_input": user_input, "conversation": conversation})
+                    context_chain.invoke(
+                        {"user_input": user_input, "conversation": conversation},
+                        config={"run_name": "context", "callbacks": [langfuse_handler]}
+                    )
 
-            print(f"System: {response.content}")
-            conversation.append(response)
+                    response = review_chain.invoke(
+                        {"user_id": user_id, "user_input": user_input, "conversation": conversation},
+                        config={"run_name": "final-response", "callbacks": [langfuse_handler]}
+                    )
+                    span.update(output=response.content)
+                    print(f"System: {response.content}")
+                    conversation.append(response)
 
     except Exception as e:
         print(f"An unexpected error occurred in the main loop: {e}")
         sys.exit(1)
-
+    finally:
+        langfuse.flush()
 
 if __name__ == "__main__":
     main()
