@@ -39,6 +39,8 @@ This project uses [uv](https://docs.astral.sh/uv/) for Python package management
 
 ### Prerequisites
 
+Python 3.11 or later is required.
+
 1. Install uv:
    ```bash
    # On macOS and Linux
@@ -82,6 +84,25 @@ This project uses [uv](https://docs.astral.sh/uv/) for Python package management
 ```bash
 uv run python main.py
 ```
+
+After the application has recorded conversations in Langfuse, evaluate up to 20
+`user-query` observations with Ragas:
+
+```bash
+uv run python eval.py --limit 20
+```
+
+To evaluate a specific trace, run:
+
+```bash
+uv run python eval.py --trace-id <trace_id> --limit 1
+```
+
+The script uses the OpenAI and Langfuse settings in `.env`. It uses
+`OPENAI_MODEL` for the judge by default; set `EVAL_MODEL` to choose a different
+judge model. Results are saved as `faithfulness` and `answer_relevancy` scores
+on the evaluated Langfuse observation. Faithfulness is skipped when the
+retrieved context is unavailable.
 
 If your IDE (VS Code, PyCharm) isn't recognizing the environment or you need to use tools that aren't uv-aware, activate the virtual environment manually:
 ```bash
@@ -151,8 +172,6 @@ Here are the main directories and files in this repo:
   │   └── images/
   ├── datasets/
   │   └── smartphones.json
-  ├── src/
-  │   └── llm_evals/
   ├── tasks/
   │   ├── task_1.md
   │   ├── task_2.md
@@ -161,6 +180,7 @@ Here are the main directories and files in this repo:
   │   └── task_5.md
   ├── .env.sample
   ├── .gitignore
+  ├── eval.py           # Batch evaluation of Langfuse observations with Ragas
   ├── main.py
   ├── pyproject.toml
   ├── README.md
