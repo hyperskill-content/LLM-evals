@@ -286,6 +286,17 @@ def main():
                         )
                         span.update(output=goodbye_message.content)
                         print(f"System: {goodbye_message.content}")
+                        feedback = ""
+                        while feedback not in ("Yes", "No"):
+                            feedback = input("Was this conversation helpful? (Yes/No): ").strip().capitalize()
+                        user_comment = input("Please give us a reason for your answer. This will help us improve: ")
+                        langfuse.create_score(
+                            session_id=session_id,
+                            name="conversation_usefulness",
+                            value=feedback,
+                            data_type="CATEGORICAL",
+                            comment=user_comment,
+                        )
                         break
 
                     conversation.append(HumanMessage(user_input))
