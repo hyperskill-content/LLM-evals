@@ -1,186 +1,143 @@
-import inspect
 import json
+import os
+
 import dotenv
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langfuse import Evaluation, EvaluatorInputs, get_client
-from langfuse.batch_evaluation import BatchEvaluationRunner
-from openai import AsyncOpenAI
 from ragas.dataset_schema import SingleTurnSample
-from ragas.embeddings import OpenAIEmbeddings
-from ragas.llms import llm_factory
-from ragas.metrics.collections import AnswerRelevancy, Faithfulness
+from ragas.embeddings import LangchainEmbeddingsWrapper
+from ragas.llms import LangchainLLMWrapper
+from ragas.metrics import Faithfulness, ResponseRelevancy
 
 dotenv.load_dotenv()
+
 langfuse = get_client()
 
-# Langfuse v4 OSS runs in events_only mode where legacy v1 /traces and /observations
-# return 404, while /api/public/v2/observations (langfuse.api.observations.get_many) works.
-_orig_fetch_batch = BatchEvaluationRunner._fetch_batch_with_retry
-
-
-async def _v4_fetch_batch_with_retry(
-    self,
-    *,
-    scope: str,
-    filter: str | None,
-    page: int,
-    limit: int,
-    max_retries: int,
-    fields: str | None,
-):
-    if scope == "observations":
-        if page > 1:
-            return []
-        response = self.client.api.observations.get_many(
-            limit=limit,
-            filter=filter,
-            fields="core,basic,io",
-            request_options={"max_retries": max_retries},
-        )
-        return list(response.data)
-    return await _orig_fetch_batch(
-        self,
-        scope=scope,
-        filter=filter,
-        page=page,
-        limit=limit,
-        max_retries=max_retries,
-        fields=fields,
+eval_llm = LangchainLLMWrapper(
+    ChatOpenAI(
+        model=os.getenv("OPENAI_MODEL"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY"),
     )
+)
+
+eval_embeddings = LangchainEmbeddingsWrapper(
+    OpenAIEmbeddings(
+        model=os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-ada-002"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+)
+
+faithfulness = Faithfulness(llm=eval_llm)
+answer_relevancy = ResponseRelevancy(llm=eval_llm, embeddings=eval_embeddings)
 
 
-BatchEvaluationRunner._fetch_batch_with_retry = _v4_fetch_batch_with_retry
+def parse_io(raw):
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"text": raw}
 
 
-def _extract_text(payload) -> str:
-    if isinstance(payload, dict):
-        for key in ("user_input", "content", "output", "input", "text"):
-            if key in payload and payload[key] is not None:
-                return str(payload[key])
-        return json.dumps(payload)
-    if isinstance(payload, str):
-        try:
-            parsed = json.loads(payload)
-            if parsed is not payload:
-                return _extract_text(parsed)
-        except json.JSONDecodeError:
-            pass
-        return payload
-    return str(payload) if payload is not None else ""
-
-
-def _get_retrieved_contexts(trace_id: str) -> list[str]:
+def get_retrieved_contexts(trace_id: str) -> list[str]:
+    """Fetch observations on the same trace to collect tool outputs from SmartphoneInfo."""
     contexts: list[str] = []
-    if not trace_id:
-        return contexts
-    obs_filter = json.dumps([
-        {"type": "string", "column": "traceId", "operator": "=", "value": trace_id},
-        {"type": "string", "column": "name", "operator": "=", "value": "SmartphoneInfo"},
-    ])
-    obs_page = langfuse.api.observations.get_many(
-        filter=obs_filter,
-        fields="core,basic,io",
-        limit=100,
-    )
-    for obs in getattr(obs_page, "data", []) or []:
-        if getattr(obs, "name", None) == "SmartphoneInfo":
-            out_text = _extract_text(getattr(obs, "output", None)).strip()
-            if out_text:
-                contexts.append(out_text)
+    cursor = None
+
+    while True:
+        page = langfuse.api.observations.get_many(
+            trace_id=trace_id,
+            limit=100,
+            cursor=cursor,
+            fields="core,basic,io",
+        )
+        for obs in page.data:
+            name = getattr(obs, "name", "") or ""
+            out = parse_io(getattr(obs, "output", None))
+            if name == "SmartphoneInfo" or "SmartphoneInfo" in name:
+                if isinstance(out, str) and out.strip():
+                    contexts.append(out.strip())
+                elif isinstance(out, dict):
+                    text = out.get("content") or out.get("output") or json.dumps(out)
+                    if str(text).strip():
+                        contexts.append(str(text))
+
+        cursor = getattr(page.meta, "cursor", None)
+        if not cursor:
+            break
+
     return contexts
 
 
-def trace_mapper(*, item):
-    """Map a Langfuse root user-query observation to EvaluatorInputs."""
-    user_input = _extract_text(item.input)
-    answer = _extract_text(item.output)
-    retrieved_contexts = _get_retrieved_contexts(item.trace_id)
+def trace_mapper(*, item) -> EvaluatorInputs:
+    """Map a root user-query observation into EvaluatorInputs with retrieved contexts."""
+    inp = parse_io(item.input)
+    out = parse_io(item.output)
+
+    user_input = inp.get("user_input") or inp.get("question") or (inp.get("text") if isinstance(inp, dict) else "") or ""
+    response = out.get("response") or out.get("answer") or (out.get("text") if isinstance(out, dict) else "") or ""
+    if isinstance(response, dict):
+        response = response.get("content", str(response))
+
+    contexts = get_retrieved_contexts(item.trace_id)
 
     return EvaluatorInputs(
-        input=user_input,
-        output=answer,
+        input=str(user_input),
+        output=str(response),
         expected_output=None,
         metadata={
             "trace_id": item.trace_id,
             "observation_id": item.id,
-            "retrieved_contexts": retrieved_contexts,
+            "retrieved_contexts": contexts,
         },
     )
 
 
-_openai_client = AsyncOpenAI()
-_llm = llm_factory("gpt-4o-mini", client=_openai_client)
-_embeddings = OpenAIEmbeddings(model="text-embedding-3-small", client=_openai_client)
-
-faithfulness_metric = Faithfulness(llm=_llm)
-relevancy_metric = AnswerRelevancy(llm=_llm, embeddings=_embeddings)
-
-
-async def _score_metric(
-    metric,
-    *,
-    user_input: str,
-    response: str,
-    retrieved_contexts: list[str] | None = None,
-) -> float:
-    if hasattr(metric, "ascore"):
-        params = inspect.signature(metric.ascore).parameters
-        kwargs = {
-            "user_input": user_input,
-            "response": response,
-        }
-        if "retrieved_contexts" in params:
-            kwargs["retrieved_contexts"] = retrieved_contexts or []
-        result = await metric.ascore(**kwargs)
-    else:
-        sample = SingleTurnSample(
-            user_input=user_input,
-            response=response,
-            retrieved_contexts=retrieved_contexts or [],
-        )
-        result = await metric.single_turn_ascore(sample)
-
-    return float(getattr(result, "value", result))
-
-
-async def faithfulness_evaluator(*, input, output, expected_output=None, metadata=None):
+async def faithfulness_evaluator(*, input, output, expected_output, metadata) -> Evaluation:
     contexts = (metadata or {}).get("retrieved_contexts") or []
-    if not contexts:
-        return []
-    score = await _score_metric(
-        faithfulness_metric,
-        user_input=str(input),
-        response=str(output),
-        retrieved_contexts=contexts,
+    sample = SingleTurnSample(
+        user_input=input or "",
+        retrieved_contexts=contexts if contexts else [""],
+        response=output or "",
     )
-    return Evaluation(name="faithfulness", value=score)
+    score = await faithfulness.single_turn_ascore(sample)
+    return Evaluation(name="faithfulness", value=float(score))
 
 
-async def answer_relevancy_evaluator(*, input, output, expected_output=None, metadata=None):
+async def relevancy_evaluator(*, input, output, expected_output, metadata) -> Evaluation:
     contexts = (metadata or {}).get("retrieved_contexts") or []
-    score = await _score_metric(
-        relevancy_metric,
-        user_input=str(input),
-        response=str(output),
-        retrieved_contexts=contexts,
+    sample = SingleTurnSample(
+        user_input=input or "",
+        retrieved_contexts=contexts if contexts else [""],
+        response=output or "",
     )
-    return Evaluation(name="answer_relevancy", value=score)
+    score = await answer_relevancy.single_turn_ascore(sample)
+    return Evaluation(name="answer_relevancy", value=float(score))
 
 
-def main():
-    filter_json = json.dumps([
-        {"type": "string", "column": "name", "operator": "=", "value": "user-query"},
-        {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True},
-    ])
+def main() -> None:
+    filter_json = json.dumps(
+        [
+            {"type": "string", "column": "name", "operator": "=", "value": "user-query"},
+            {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True},
+        ]
+    )
+
     result = langfuse.run_batched_evaluation(
-        scope="observations",
         mapper=trace_mapper,
-        evaluators=[faithfulness_evaluator, answer_relevancy_evaluator],
+        evaluators=[faithfulness_evaluator, relevancy_evaluator],
         filter=filter_json,
-        max_items=5,
-        _add_observation_scores_to_trace=True,
+        max_items=20,
         verbose=True,
     )
-    print(result.total_items_processed, result.total_scores_created)
+
+    print(f"Processed: {result.total_items_processed}")
+    print(f"Scores created: {result.total_scores_created}")
     langfuse.flush()
 
 
