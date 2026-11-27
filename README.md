@@ -93,6 +93,30 @@ source .venv/bin/activate  # On macOS/Linux
 python main.py
 ```
 
+### Running the Evaluation
+
+`eval.py` runs a model-based evaluation (LLM-as-a-judge) over the traces collected in Langfuse. It uses [Ragas](https://docs.ragas.io/) metrics and pushes the scores back to Langfuse with `run_batched_evaluation`.
+
+```bash
+uv run python eval.py
+```
+
+It evaluates every `user-query` trace with two metrics:
+
+- `ragas_faithfulness` — whether the answer is supported by the specs returned by the `SmartphoneInfo` tool. The tool outputs are loaded from the trace's observations and used as `retrieved_contexts`. Traces without tool calls (off-topic questions, goodbyes) are skipped.
+- `ragas_answer_relevancy` — whether the answer addresses the user's question.
+
+The judge LLM and embeddings use the same `OPENAI_*` variables from `.env` as the application.
+
+> **Note:** `run_batched_evaluation` reads traces through the legacy `/api/public/traces` endpoint, which is disabled in Langfuse v4's default `events_only` mode. When self-hosting Langfuse, add these variables to the `langfuse-worker` environment in Langfuse's `docker-compose.yml` (the web service inherits them), restart Langfuse, then generate new traces:
+>
+> ```yaml
+> LANGFUSE_MIGRATION_V4_WRITE_MODE: dual
+> LANGFUSE_MIGRATION_V4_NATIVE_OTEL_BEHAVIOUR: dual_write
+> ```
+>
+> Traces created before the switch are not visible to the legacy API.
+
 ### Adding New Dependencies
 
 To add new packages to the project:
@@ -161,6 +185,7 @@ Here are the main directories and files in this repo:
   │   └── task_5.md
   ├── .env.sample
   ├── .gitignore
+  ├── eval.py
   ├── main.py
   ├── pyproject.toml
   ├── README.md
